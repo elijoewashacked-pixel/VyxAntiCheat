@@ -1,0 +1,21 @@
+name: VyxAC
+version: ${project.version}
+main: com.vyxac.VyxAC
+api-version: "1.20"
+author: VyxAC
+description: Lightweight, false-positive-averse anticheat with a low-CPU anomaly model.
+commands:
+  vyxac:
+    description: VyxAC main command
+    usage: /vyxac help
+    aliases: [vac]
+permissions:
+  vyxac.admin:
+    description: Full access to /vyxac
+    default: op
+  vyxac.alerts:
+    description: Receive cheat alerts
+    default: op
+  vyxac.bypass:
+    description: Not checked by VyxAC
+    default: false
