@@ -20,7 +20,7 @@ import java.util.Map;
 
 public final class VyxCommand implements CommandExecutor, TabCompleter {
     private static final List<String> SUBS = Arrays.asList("help", "reload", "alerts", "status", "profile", "history", "clear",
-            "exempt", "punish", "dismiss", "check", "configure", "customize", "special", "ai", "tp");
+            "exempt", "punish", "dismiss", "check", "configure", "customize", "special", "ai", "diagnostics", "tp");
 
     /** feature name -> config path (used by /vyxac special) */
     private static final Map<String, String> FEATURES = new LinkedHashMap<>();
@@ -104,6 +104,7 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
                 }
                 case "special" -> special(s, a);
                 case "ai" -> ai(s, a);
+                case "diagnostics" -> diagnostics(s, a);
                 case "tp" -> {
                     if (!(s instanceof Player p)) { msg(s, "&cPlayers only."); break; }
                     if (a.length < 2) { msg(s, "&7Usage: /vyxac tp <player>"); break; }
@@ -137,6 +138,7 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
                 "&b/vyxac customize &7- GUI to toggle checks and features",
                 "&b/vyxac special [feature] [value] &7- mode, mitigation, lag protection, AI, webhook ...",
                 "&b/vyxac ai [status|reset <player>] &7- mini AI",
+                "&b/vyxac diagnostics [now|last] &7- daily report: noisy checks, suspected cheaters, tuning tips",
                 "&b/vyxac reload &7- reload config.yml",
         };
         msg(s, "&fVyxAC &7commands:");
@@ -351,6 +353,17 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
         if (shown == 0) s.sendMessage(Settings.color("&7Nobody is above 30% confidence."));
     }
 
+    private void diagnostics(CommandSender s, String[] a) {
+        boolean last = a.length > 1 && a[1].equalsIgnoreCase("last");
+        List<String> lines = last ? pl.diagnostics().lastReport() : pl.diagnostics().current();
+        if (lines.isEmpty()) {
+            msg(s, "&7No completed daily report yet. Use &b/vyxac diagnostics now &7for today so far.");
+            return;
+        }
+        for (String l : lines.size() > 45 ? lines.subList(0, 45) : lines) s.sendMessage(Settings.color("&7" + l));
+        msg(s, "&8Reports are saved in plugins/VyxAC/diagnostics/");
+    }
+
     // ------------------------------------------------------------------ tab completion
 
     private static List<String> filter(List<String> all, String prefix) {
@@ -394,6 +407,9 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
                 }
                 case "ai" -> {
                     return filter(List.of("status", "reset"), a[1]);
+                }
+                case "diagnostics" -> {
+                    return filter(List.of("now", "last"), a[1]);
                 }
                 case "configure" -> {
                     List<String> l = new ArrayList<>();

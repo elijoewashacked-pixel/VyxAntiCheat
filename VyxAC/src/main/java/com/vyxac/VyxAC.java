@@ -19,6 +19,7 @@ public final class VyxAC extends JavaPlugin {
     private PunishManager punish;
     private AiMonitor ai;
     private PacketChecks packets;
+    private Diagnostics diagnostics;
 
     @Override
     public void onEnable() {
@@ -34,6 +35,7 @@ public final class VyxAC extends JavaPlugin {
         punish = new PunishManager(this);
         ai = new AiMonitor(this);
         packets = new PacketChecks(this);
+        diagnostics = new Diagnostics(this);
         loadAll();
 
         for (Player p : Bukkit.getOnlinePlayers()) data(p);
@@ -56,6 +58,7 @@ public final class VyxAC extends JavaPlugin {
         Bukkit.getScheduler().runTaskTimer(this, () -> {
             vio.decayAll();
             packets.secondTick();
+            diagnostics.secondTick();
         }, 20L, 20L);
 
         getLogger().info("VyxAC enabled: " + checks.all().size() + " checks, mode " + settings.punishMode
@@ -65,6 +68,7 @@ public final class VyxAC extends JavaPlugin {
     @Override
     public void onDisable() {
         if (ai != null) ai.stop();
+        if (diagnostics != null) diagnostics.finish(true); // partial report of the current day
         if (vio != null) vio.flushLog();
         data.clear();
     }
@@ -76,6 +80,7 @@ public final class VyxAC extends JavaPlugin {
         settings.load(getConfig());
         checks.load(getConfig());
         ai.reload(getConfig());
+        diagnostics.reload(getConfig());
         for (PlayerData pd : data.values()) pd.forceBypassRecheck();
     }
 
@@ -94,6 +99,7 @@ public final class VyxAC extends JavaPlugin {
     public Violations vio() { return vio; }
     public PunishManager punish() { return punish; }
     public AiMonitor ai() { return ai; }
+    public Diagnostics diagnostics() { return diagnostics; }
 
     public PlayerData data(Player p) {
         PlayerData pd = data.get(p.getUniqueId());

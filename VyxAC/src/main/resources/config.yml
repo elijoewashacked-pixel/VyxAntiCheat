@@ -14,7 +14,7 @@ general:
   require-swing: true         # combat checks only run on hits that came with a swing (keeps RPG/skill plugins safe)
   cancel-hit-ms: 1500         # how long hits are cancelled after a mitigated combat flag
   max-rewind-ms: 800          # lag-compensation cap for hit validation
-  rewind-extra-ms: 100
+  rewind-extra-ms: 150
 
 lag:
   min-tps: 17.0               # flags are ignored while TPS is below this or after a long tick
@@ -54,6 +54,11 @@ features:
   lag-protection: true
   log-to-file: true
   ai: true
+
+diagnostics:
+  enabled: true               # daily report in plugins/VyxAC/diagnostics/ (which checks look noisy, who looks like a cheater)
+  notify-staff: true          # tell admins when the daily report is ready
+  console: true               # print the report summary to the console
 
 ai:
   interval-seconds: 4

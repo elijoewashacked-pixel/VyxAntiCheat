@@ -109,6 +109,7 @@ public final class CombatListener implements Listener {
         Entity target = e.getEntity();
         long prevAttack = pd.lastAttackMs;
         pd.lastAttackMs = now;
+        if (p.getInventory().getItemInMainHand().getType().name().equals("MACE")) pd.lastLaunch = now; // wind burst launches the attacker
 
         try {
             if (target instanceof EnderCrystal) {
@@ -253,16 +254,24 @@ public final class CombatListener implements Listener {
         if (minNorm > limit) {
             long ext = normal + (long) BACK.p("extra-ms");
             double minExt = minDist(pd2, tp, ex, ey, ez, now, ext);
-            if (BACK.enabled && minExt <= limit) {
-                cancel |= pl.vio().flag(pd, BACK, String.format("hit needs a position older than %dms (%.2f blocks away now)", normal, minNorm), 1.0);
-            } else if (REACH.enabled) {
+            boolean rescued = minExt <= limit; // a slightly older position would have been in range: looks like lag
+            if (rescued) {
+                if (BACK.enabled && pd.bump("back", 1) >= BACK.p("buffer")) {
+                    pd.setBuf("back", 0);
+                    cancel |= pl.vio().flag(pd, BACK, String.format("hit needs a position older than %dms (%.2f blocks away now)", normal, minNorm), 1.0);
+                }
+            } else if (REACH.enabled && pd.bump("reach", 1) >= REACH.p("buffer")) {
+                // out of range even with every recent position of the target: needs repeated hits before it counts
+                pd.setBuf("reach", 0);
                 cancel |= pl.vio().flag(pd, REACH, String.format("%.2f blocks (limit %.2f)", minNorm, limit), Math.min(4.0, 1.0 + (minNorm - limit) * 2));
             }
             return cancel;
         }
+        pd.bump("reach", -0.5);
+        pd.bump("back", -0.5);
 
         // Hitbox: the crosshair (current or previous camera, current or previous eye) must be on the lag-compensated box
-        if (HITBOX.enabled && dist > 0.5) {
+        if (HITBOX.enabled && dist > 1.0 && now - pd.lastBigRot > HITBOX.p("flick-ms")) {
             double maxT = limit + 1.5;
             double expand = HITBOX.p("expand");
             boolean hit = rayHit(ex, ey, ez, ldx, ldy, ldz, maxT, pd2, tp, now, normal, expand);
@@ -274,8 +283,13 @@ public final class CombatListener implements Listener {
                         || rayHit(prev.x, prev.y + eh, prev.z, pdx, pdy, pdz, maxT, pd2, tp, now, normal, expand)
                         || rayHit(prev.x, prev.y + eh, prev.z, ldx, ldy, ldz, maxT, pd2, tp, now, normal, expand);
             }
-            if (!hit) {
-                cancel |= pl.vio().flag(pd, HITBOX, String.format("crosshair %.0f degrees off the target", aimErr), 1.0);
+            if (!hit && aimErr > HITBOX.p("min-angle")) {
+                if (pd.bump("hitbox", 1) >= HITBOX.p("buffer")) {
+                    pd.setBuf("hitbox", 0);
+                    cancel |= pl.vio().flag(pd, HITBOX, String.format("crosshair %.0f degrees off the target", aimErr), 1.0);
+                }
+            } else {
+                pd.bump("hitbox", -0.5);
             }
         }
 

@@ -7,7 +7,7 @@ import java.util.Map;
 /** Definition + live settings of one check. The same object is mutated on reload, so references stay valid. */
 public final class CheckInfo {
     public final String name, category, description;
-    public boolean enabled = true, punishable;
+    public boolean enabled = true, defaultEnabled = true, punishable;
     /** VL added per flag (multiplied by the flag weight) */
     public double vlPerFlag;
     /** alerts are only sent once the VL reaches this value */

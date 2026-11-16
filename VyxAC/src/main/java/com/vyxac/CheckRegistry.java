@@ -44,9 +44,9 @@ public final class CheckRegistry {
         def("TriggerBot", "combat", "Attacks with a machine-constant delay after the crosshair moves", true, 1.0, 2, 10, NO,
                 "max-reaction-ms", 70, "max-std-ms", 12, "samples", 10);
         def("Reach", "combat", "Hits from further away than the game allows", true, 1.0, 1, 6, 2,
-                "tolerance", 0.45);
+                "tolerance", 0.6, "buffer", 2);
         def("Hitbox", "combat", "Hits while the crosshair is not on the target", true, 1.0, 1, 8, 3,
-                "expand", 0.3);
+                "expand", 0.5, "buffer", 3, "flick-ms", 300, "min-angle", 25);
         def("Criticals", "combat", "Critical hits without really falling", true, 1.0, 2, 8, 4,
                 "max-fall", 0.5, "buffer", 4);
         def("Velocity", "combat", "Takes much less knockback than expected", true, 1.0, 2, 8, NO,
@@ -64,15 +64,15 @@ public final class CheckRegistry {
         def("AutoCrystal", "combat", "Places and detonates end crystals with machine timing", true, 1.0, 2, 8, NO,
                 "max-reaction-ms", 60, "buffer", 4);
         def("Backtrack", "combat", "Hits targets at positions older than lag compensation allows", true, 0.7, 1, 8, 3,
-                "extra-ms", 400);
+                "extra-ms", 250, "buffer", 2);
 
         // ---------------------------------------------------------- movement
         def("Speed", "movement", "Moves faster than vanilla physics allow", true, 1.0, 1, 8, 3,
                 "tolerance", 1.0, "leniency", 1.12, "ice-multiplier", 2.2);
         def("Fly", "movement", "Hovers or rises without support", true, 1.0, 1, 8, 3,
-                "tolerance", 0.55, "hover-limit", 8);
+                "tolerance", 0.55, "hover-limit", 8, "rise-buffer", 3);
         def("LongJump", "movement", "Jumps further than the airtime allows", true, 1.0, 1, 6, 2,
-                "leniency", 1.35, "slack", 0.6);
+                "leniency", 1.35, "slack", 1.2, "buffer", 2);
         def("BunnyHop", "movement", "Chains hops faster than vanilla momentum allows", true, 1.0, 1, 6, 3,
                 "leniency", 1.28, "runs", 4);
         def("NoFall", "movement", "Lands from a height without taking fall damage", true, 1.0, 1, 5, 2,
@@ -103,16 +103,17 @@ public final class CheckRegistry {
                 "max-interval-ms", 55, "buffer", 8);
         def("InventoryMove", "player", "Keeps moving while a container is open", true, 1.0, 1, 6, 3,
                 "min-open-ms", 600, "min-speed", 0.15, "buffer", 6);
-        def("Freecam", "player", "Interacts with a block face the player cannot see", true, 1.0, 1, 6, 1,
-                "tolerance", 0.5);
+        def("Freecam", "player", "Interacts with a block face the player cannot see (off by default)", false, 1.0, 1, 6, NO,
+                "tolerance", 0.7, "buffer", 3, "flick-ms", 400);
+        map.get("Freecam").defaultEnabled = false;
         def("XRay", "player", "Mines hidden ores far more often than chance allows (needs staff review)", false, 1.0, 1, 5, NO,
                 "min-hidden", 5, "min-ratio", 0.08, "window-sec", 600);
         def("Scaffold", "player", "Places blocks without looking at them", true, 1.0, 1, 6, 2,
-                "expand", 0.25, "buffer", 4);
+                "expand", 0.4, "buffer", 4, "flick-ms", 300);
         def("FastPlace", "player", "Places blocks faster than allowed", true, 1.0, 1, 6, 2,
                 "max-per-sec", 14);
         def("Nuker", "player", "Breaks many blocks at once", true, 1.0, 1, 6, 2,
-                "max-per-sec", 16, "same-tick", 4);
+                "max-per-sec", 28, "same-tick", 6, "window-ms", 20);
         def("FastBreak", "player", "Breaks blocks faster than tool speed allows", true, 1.0, 1, 6, 2,
                 "tolerance", 0.6);
         def("Baritone", "player", "Bot-like movement: sprinting sideways relative to the camera", false, 1.0, 1, 6, NO,
@@ -158,7 +159,7 @@ public final class CheckRegistry {
     public void registerDefaults(FileConfiguration c) {
         for (CheckInfo ci : map.values()) {
             String b = "checks." + ci.name + ".";
-            c.addDefault(b + "enabled", true);
+            c.addDefault(b + "enabled", ci.defaultEnabled);
             c.addDefault(b + "punishable", ci.punishable);
             c.addDefault(b + "vl-per-flag", ci.vlPerFlag);
             c.addDefault(b + "alert-vl", ci.alertVl);
@@ -173,7 +174,7 @@ public final class CheckRegistry {
     public void load(FileConfiguration c) {
         for (CheckInfo ci : map.values()) {
             String b = "checks." + ci.name + ".";
-            ci.enabled = c.getBoolean(b + "enabled", true);
+            ci.enabled = c.getBoolean(b + "enabled", ci.defaultEnabled);
             ci.punishable = c.getBoolean(b + "punishable", ci.punishable);
             ci.vlPerFlag = c.getDouble(b + "vl-per-flag", ci.vlPerFlag);
             ci.alertVl = c.getDouble(b + "alert-vl", ci.alertVl);

@@ -33,7 +33,7 @@ public final class Settings {
         requireSwing = c.getBoolean("general.require-swing", true);
         cancelHitMs = c.getLong("general.cancel-hit-ms", 1500);
         maxRewindMs = c.getInt("general.max-rewind-ms", 800);
-        rewindExtraMs = c.getInt("general.rewind-extra-ms", 100);
+        rewindExtraMs = c.getInt("general.rewind-extra-ms", 150);
 
         minTps = c.getDouble("lag.min-tps", 17.0);
         maxPing = c.getInt("lag.max-ping", 600);

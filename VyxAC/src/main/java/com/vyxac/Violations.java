@@ -64,7 +64,9 @@ public final class Violations {
         if (v >= ci.alertVl) alert(pd, ci, info, v, now);
         logLine(pd, ci, info, v);
         if (ci.punishable) pl.punish().evaluate(pd);
-        return s.mitigation && v >= ci.mitigateVl;
+        boolean mit = s.mitigation && v >= ci.mitigateVl;
+        pl.diagnostics().onFlag(pd, ci, v, mit);
+        return mit;
     }
 
     /** Called once per second: every VL decays a little so old, isolated flags disappear. */

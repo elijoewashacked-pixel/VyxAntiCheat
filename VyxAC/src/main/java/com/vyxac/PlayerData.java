@@ -37,6 +37,7 @@ public final class PlayerData {
     // ---- lifecycle timestamps (ms) ----
     public long lastTeleport, lastVelocity, lastWorld, lastRespawn, lastFirework, lastGlideEnd, lastVehicle, lastFlight;
     public long lastDamage, lastMitigate, lastSwingMs, lastAttackMs, lastHeldMs, lastFallDamage, lastTotemPop;
+    public long lastLaunch;
     public long lastIce, lastBounce, lastSticky, lastGlide, lastRiptide, lastBigRot, lastCrystalPlace, lastFlagMs;
     public long exemptUntil;
     public double lastBigRotDeg;
@@ -56,6 +57,7 @@ public final class PlayerData {
     public MoveCtx prev;
     public long lastMoveMs;
     public int airTicks, groundTicks, hoverTicks, ascendTicks;
+    public int lastTicks = 1;
     public double groundY, lastDy, lastH, speedDebt, timerBal;
     public boolean hasGroundY;
     public float lastDYaw;
@@ -190,6 +192,7 @@ public final class PlayerData {
         completedRun = null;
         kb = null;
         airTicks = groundTicks = hoverTicks = ascendTicks = 0;
+        lastTicks = 1;
         lastMoveMs = 0;
         speedDebt = 0;
         timerBal = 0;
