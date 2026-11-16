@@ -12,8 +12,12 @@ jobs:
           distribution: temurin
           java-version: 17
           cache: maven
-      - run: mvn -B package
+      - name: Build
+        run: |
+          POM=$(find . -name pom.xml | head -1)
+          echo "Using $POM"
+          mvn -B -f "$POM" package
       - uses: actions/upload-artifact@v4
         with:
           name: VyxAC-jar
-          path: target/VyxAC-*.jar
+          path: "**/target/VyxAC-*.jar"
