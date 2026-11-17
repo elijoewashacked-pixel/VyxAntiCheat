@@ -1,0 +1,69 @@
+# ============================================================
+#  VyxAC configuration
+#  Per-check sections (checks.<name>.*) are generated automatically
+#  on first start. Edit here or use /vyxac configure <path> <value>.
+# ============================================================
+general:
+  prefix: "&8[&bVyxAC&8] &7"
+  enabled: true
+  exempt-bedrock: true        # skip Bedrock/Floodgate players (name starts with the prefix below)
+  bedrock-prefix: "."
+  join-grace-seconds: 8       # no checks right after joining
+  teleport-grace-ms: 1500
+  velocity-grace-ms: 2500     # knockback / explosions / pistons
+  require-swing: true         # combat checks only run on hits that came with a swing (keeps RPG/skill plugins safe)
+  cancel-hit-ms: 1500         # how long hits are cancelled after a mitigated combat flag
+  max-rewind-ms: 800          # lag-compensation cap for hit validation
+  rewind-extra-ms: 150
+
+lag:
+  min-tps: 17.0               # flags are ignored while TPS is below this or after a long tick
+  max-ping: 600               # combat checks skip players above this ping
+
+violations:
+  decay-per-minute: 1.0       # every check's VL decays by this much per minute
+
+alerts:
+  default-on: true
+  console: true
+  hover: true                 # hover = details, click = teleport to player
+  cooldown-ms: 1500           # per player+check
+  sound: ""                   # e.g. block.note_block.pling  (empty = off)
+  discord-webhook: ""
+  format: "&8[&bVyxAC&8] &f%player% &7failed &c%check% &8(&7%info%&8) &8[&e%vl%&8/&c%punish_vl%&8] &7ping &f%ping% &7tps &f%tps%"
+
+punishments:
+  # ALERT_ONLY = never punish, REVIEW = ask staff to approve (click), AUTO = punish automatically
+  mode: REVIEW
+  min-distinct-checks: 2      # evidence from at least this many different punishable checks...
+  min-flags: 6                # ...and at least this many flags inside the window
+  window-seconds: 180
+  ai-corroboration-confidence: 0.90   # the mini AI counts as one extra piece of evidence above this
+  grace-seconds: 30
+  cooldown-seconds: 120
+  max-ping: 400
+  auto-delay-ticks: 60
+  review-cooldown-seconds: 300
+  ladder:
+    - "kick %player% &c[VyxAC] Unfair advantage detected (%check%)"
+    - "kick %player% &c[VyxAC] Unfair advantage detected (%check%) - repeated"
+    - "ban %player% &c[VyxAC] Unfair advantage detected (%check%). Appeal if this is a mistake."
+
+features:
+  mitigation: true            # cancel hits / blocks from flagged combat and world actions
+  mitigate-movement: false    # also move players back on flagged MOVEMENT (can feel like rubber-banding: leave off unless you need it)
+  lag-protection: true
+  log-to-file: true
+  ai: true
+
+diagnostics:
+  enabled: true               # daily report in plugins/VyxAC/diagnostics/ (which checks look noisy, who looks like a cheater)
+  notify-staff: true          # tell admins when the daily report is ready
+  console: true               # print the report summary to the console
+
+ai:
+  interval-seconds: 4
+  min-attacks: 20
+  sensitivity: 1.0            # higher = stricter
+  alert-confidence: 0.88
+  max-micros-per-second: 3000 # hard CPU budget for all AI work per second
