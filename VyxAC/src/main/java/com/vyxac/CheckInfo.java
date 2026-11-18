@@ -16,6 +16,8 @@ public final class CheckInfo {
     public double punishVl;
     /** hits / moves are only cancelled (mitigated) once the VL reaches this value */
     public double mitigateVl;
+    public boolean defPunishable;
+    public double defVlPerFlag, defAlertVl, defPunishVl, defMitigateVl;
     final Map<String, Double> defaults = new LinkedHashMap<>();
     final Map<String, Double> params = new HashMap<>();
 

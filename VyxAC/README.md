@@ -2,7 +2,7 @@
 
 ## Build and install
 1. Needs JDK 17+ and Maven. In this folder run: `mvn package`
-2. Copy `target/VyxAC-1.0.0.jar` into your server's `plugins/` folder, start the server once.
+2. Copy `target/VyxAC-1.1.1.jar` into your server's `plugins/` folder, start the server once.
 3. Edit `plugins/VyxAC/config.yml` (every check gets its own section on first start) or use `/vyxac`.
 
 Optional pom change: set `spigot-api` to the version you run (1.21.x works too, Java 21 on the server is fine).
@@ -16,6 +16,7 @@ Optional pom change: set `spigot-api` to the version you run (1.21.x works too, 
 * Checks use accumulated evidence (debt / buffers), never single events, and are suspended during: join, teleport,
   respawn, world change, knockback/explosions, vehicles, flight, elytra/riptide, pistons, creative/spectator,
   server lag (TPS / long ticks) and connection stalls.
+* Movement setbacks (pulling a player back) are **off by default** (`features.mitigate-movement`); flags and alerts still work.
 * Unknown world data (unloaded chunk) is always treated as "player is legitimately supported".
 * Everything is configurable per check: `enabled`, `punishable`, `vl-per-flag`, `alert-vl`, `punish-vl`, `mitigate-vl`, `params.*`.
 
@@ -63,3 +64,17 @@ Plus the pseudo-check `AI`.
 * Plugins that break many blocks or deal damage via API (VeinMiner, skill plugins) can look like Nuker / MultiAura:
   give those players `vyxac.bypass` or disable that check. `general.require-swing` already ignores most API damage.
 * Bedrock players (Floodgate prefix, default `.`) are exempt.
+
+## 1.1.1: reports, staff mode, self-test
+* `/vac report <player> <reason>` - players report; staff get a clickable ticket with a VyxAC evidence snapshot.
+* `/vyxac reports` - ticket GUI: claim, reply (typed in chat), dismiss, close as "action taken", reopen. Answers reach the reporter even if they are offline.
+* `/vyxac staff` - vanish + flight + invulnerability + hotbar tools (reports, players, inspect, freeze, inventory viewer, random teleport, staff chat, vanish toggle, leave). The real inventory is saved on disk and restored on exit, quit, plugin disable and after a crash.
+* `/vyxac staff freeze|inspect|chat|note|notes|rtp|players|list` - more staff tools.
+* `/vac test` - self-test: alerts, webhook, punishment ladder dry run. Nobody is punished.
+* Permissions: `vyxac.staff` (op), `vyxac.report` (everyone), `vyxac.admin`.
+
+## Combat accuracy (1.1.1)
+* **Reach**: default tolerance 0.3 blocks, flags on the first clearly out-of-range hit, plus an *average reach* statistic (catches constant 3.2-3.5 block reach). Lag explains small excesses only.
+* **Hitbox**: accepts every camera angle swept since the previous movement packet (so fast flicks are legal, silent aim is not), hitbox expansion 0.15, and flags hits **through cobwebs and solid walls** (`checks.Hitbox.params.web` / `wall`).
+* `/vyxac preset strict|normal|relaxed` changes Reach/Hitbox/Backtrack strictness in one command.
+* Every alert has **[Punish] [Kick] [Teleport]** buttons (`alerts.buttons`).

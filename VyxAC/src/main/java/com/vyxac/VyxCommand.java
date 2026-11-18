@@ -20,7 +20,7 @@ import java.util.Map;
 
 public final class VyxCommand implements CommandExecutor, TabCompleter {
     private static final List<String> SUBS = Arrays.asList("help", "reload", "alerts", "status", "profile", "history", "clear",
-            "exempt", "punish", "dismiss", "check", "configure", "customize", "special", "ai", "diagnostics", "tp");
+            "exempt", "punish", "dismiss", "check", "configure", "customize", "special", "ai", "diagnostics", "diagnose", "report", "reports", "staff", "test", "preset", "kick", "tp");
 
     /** feature name -> config path (used by /vyxac special) */
     private static final Map<String, String> FEATURES = new LinkedHashMap<>();
@@ -28,6 +28,7 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
     static {
         FEATURES.put("mode", "punishments.mode");
         FEATURES.put("mitigation", "features.mitigation");
+        FEATURES.put("mitigate-movement", "features.mitigate-movement");
         FEATURES.put("lag-protection", "features.lag-protection");
         FEATURES.put("ai", "features.ai");
         FEATURES.put("ai-sensitivity", "ai.sensitivity");
@@ -41,10 +42,24 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
 
     private final VyxAC pl;
     private final CustomizeGui gui;
+    private final ExtraCommands extra;
 
-    public VyxCommand(VyxAC pl, CustomizeGui gui) {
+    public VyxCommand(VyxAC pl, CustomizeGui gui, ExtraCommands extra) {
         this.pl = pl;
         this.gui = gui;
+        this.extra = extra;
+    }
+
+    /** which permission a subcommand needs (admins may do everything) */
+    private static boolean allowed(CommandSender s, String sub) {
+        if (s.hasPermission("vyxac.admin")) return true;
+        return switch (sub) {
+            case "help" -> true;
+            case "alerts" -> s.hasPermission("vyxac.alerts");
+            case "report" -> s.hasPermission("vyxac.report");
+            case "reports", "staff", "tp", "kick" -> s.hasPermission("vyxac.staff");
+            default -> false;
+        };
     }
 
     private void msg(CommandSender s, String text) {
@@ -63,8 +78,7 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
     @Override
     public boolean onCommand(CommandSender s, Command cmd, String label, String[] a) {
         String sub = a.length == 0 ? "help" : a[0].toLowerCase(Locale.ROOT);
-        boolean admin = s.hasPermission("vyxac.admin");
-        if (!admin && !(sub.equals("alerts") && s.hasPermission("vyxac.alerts"))) {
+        if (!allowed(s, sub)) {
             msg(s, "&cYou do not have permission.");
             return true;
         }
@@ -104,7 +118,23 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
                 }
                 case "special" -> special(s, a);
                 case "ai" -> ai(s, a);
-                case "diagnostics" -> diagnostics(s, a);
+                case "diagnostics", "diagnose" -> diagnostics(s, a);
+                case "report" -> extra.report(s, a);
+                case "reports" -> extra.reports(s, a);
+                case "staff" -> extra.staff(s, a);
+                case "test" -> extra.test(s, a);
+                case "preset" -> extra.preset(s, a);
+                case "kick" -> {
+                    if (a.length < 2) { msg(s, "&7Usage: /vyxac kick <player> [reason]"); break; }
+                    Player t = Bukkit.getPlayerExact(a[1]);
+                    if (t == null) { msg(s, "&cPlayer is not online."); break; }
+                    if (t.hasPermission("vyxac.admin") && !s.hasPermission("vyxac.admin")) { msg(s, "&cYou cannot kick an admin."); break; }
+                    String reason = a.length > 2 ? String.join(" ", Arrays.copyOfRange(a, 2, a.length)) : "Suspicious activity (reviewed by staff)";
+                    reason = reason.replaceAll("[&\u00a7]", "");
+                    pl.vio().log("KICK " + t.getName() + " by " + s.getName() + ": " + reason);
+                    t.kickPlayer(Settings.color("&c[VyxAC] " + reason));
+                    msg(s, "&aKicked &f" + t.getName() + "&a.");
+                }
                 case "tp" -> {
                     if (!(s instanceof Player p)) { msg(s, "&cPlayers only."); break; }
                     if (a.length < 2) { msg(s, "&7Usage: /vyxac tp <player>"); break; }
@@ -125,6 +155,20 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
     // ------------------------------------------------------------------ subcommands
 
     private void help(CommandSender s) {
+        if (!s.hasPermission("vyxac.admin")) {
+            msg(s, "&fVyxAC commands:");
+            if (s.hasPermission("vyxac.report")) {
+                s.sendMessage(Settings.color("&b/vac report <player> <reason> &7- report a player to staff"));
+                s.sendMessage(Settings.color("&b/vac report list &7- your latest reports"));
+            }
+            if (s.hasPermission("vyxac.staff")) {
+                s.sendMessage(Settings.color("&b/vyxac kick|tp <player> &7- the buttons on alerts"));
+                s.sendMessage(Settings.color("&b/vyxac staff &7- staff mode (vanish + tools)"));
+                s.sendMessage(Settings.color("&b/vyxac reports &7- open the report tickets"));
+            }
+            if (s.hasPermission("vyxac.alerts")) s.sendMessage(Settings.color("&b/vyxac alerts [on|off] &7- your alerts"));
+            return;
+        }
         String[] lines = {
                 "&b/vyxac status &7- server health, AI cost, counts",
                 "&b/vyxac alerts [on|off] &7- your alerts",
@@ -139,6 +183,11 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
                 "&b/vyxac special [feature] [value] &7- mode, mitigation, lag protection, AI, webhook ...",
                 "&b/vyxac ai [status|reset <player>] &7- mini AI",
                 "&b/vyxac diagnostics [now|last] &7- daily report: noisy checks, suspected cheaters, tuning tips",
+                "&b/vyxac test [alert|webhook|flag <check>|punish <player>] &7- self-test, nobody is punished",
+                "&b/vyxac staff &7- staff mode (vanish, tools), freeze, notes, staff chat",
+                "&b/vyxac reports &7- report tickets;  players use &b/vac report <player> <reason>",
+                "&b/vyxac preset <strict|normal|relaxed> &7- Reach / Hitbox strictness in one command",
+                "&b/vyxac kick <player> [reason] &7- kick (also a button on every alert)",
                 "&b/vyxac reload &7- reload config.yml",
         };
         msg(s, "&fVyxAC &7commands:");
@@ -381,12 +430,27 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
 
     @Override
     public List<String> onTabComplete(CommandSender s, Command cmd, String alias, String[] a) {
-        if (!s.hasPermission("vyxac.admin")) return a.length == 1 ? filter(List.of("alerts"), a[0]) : new ArrayList<>();
+        if (!s.hasPermission("vyxac.admin")) {
+            List<String> mine = new ArrayList<>();
+            if (s.hasPermission("vyxac.alerts")) mine.add("alerts");
+            if (s.hasPermission("vyxac.report")) mine.add("report");
+            if (s.hasPermission("vyxac.staff")) {
+                mine.add("reports");
+                mine.add("staff");
+            }
+            if (a.length == 1) return filter(mine, a[0]);
+            String f = a[0].toLowerCase(Locale.ROOT);
+            return mine.contains(f) && !f.equals("alerts") ? extra.tab(s, a) : new ArrayList<>();
+        }
         if (a.length == 1) return filter(SUBS, a[0]);
         String sub = a[0].toLowerCase(Locale.ROOT);
+        if (sub.equals("report") || sub.equals("reports") || sub.equals("staff") || sub.equals("test")) return extra.tab(s, a);
         if (a.length == 2) {
             switch (sub) {
-                case "profile", "history", "exempt", "punish", "dismiss", "tp" -> {
+                case "preset" -> {
+                    return filter(List.of("strict", "normal", "relaxed"), a[1]);
+                }
+                case "profile", "history", "exempt", "punish", "dismiss", "tp", "kick" -> {
                     return filter(players(), a[1]);
                 }
                 case "clear" -> {
@@ -408,7 +472,7 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
                 case "ai" -> {
                     return filter(List.of("status", "reset"), a[1]);
                 }
-                case "diagnostics" -> {
+                case "diagnostics", "diagnose" -> {
                     return filter(List.of("now", "last"), a[1]);
                 }
                 case "configure" -> {

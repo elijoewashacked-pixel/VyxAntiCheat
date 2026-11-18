@@ -40,6 +40,7 @@ public final class PlayerData {
     public long lastLaunch;
     public long lastIce, lastBounce, lastSticky, lastGlide, lastRiptide, lastBigRot, lastCrystalPlace, lastFlagMs;
     public long exemptUntil;
+    public boolean staffMode;
     public double lastBigRotDeg;
 
     // ---- bypass cache ----
@@ -115,7 +116,7 @@ public final class PlayerData {
     }
 
     public boolean bypassed(long now, Settings s) {
-        if (now < exemptUntil) return true;
+        if (staffMode || now < exemptUntil) return true;
         if (now - bypassAt > 10_000L) {
             bypassAt = now;
             Player p = player;

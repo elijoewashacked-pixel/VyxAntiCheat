@@ -25,6 +25,11 @@ public final class CheckRegistry {
         c.alertVl = alertVl;
         c.punishVl = punishVl;
         c.mitigateVl = mitigateVl;
+        c.defPunishable = punishable;
+        c.defVlPerFlag = vlPerFlag;
+        c.defAlertVl = alertVl;
+        c.defPunishVl = punishVl;
+        c.defMitigateVl = mitigateVl;
         for (int i = 0; i + 1 < kv.length; i += 2) {
             c.defaults.put((String) kv[i], ((Number) kv[i + 1]).doubleValue());
         }
@@ -44,9 +49,9 @@ public final class CheckRegistry {
         def("TriggerBot", "combat", "Attacks with a machine-constant delay after the crosshair moves", true, 1.0, 2, 10, NO,
                 "max-reaction-ms", 70, "max-std-ms", 12, "samples", 10);
         def("Reach", "combat", "Hits from further away than the game allows", true, 1.0, 1, 6, 2,
-                "tolerance", 0.6, "buffer", 2);
-        def("Hitbox", "combat", "Hits while the crosshair is not on the target", true, 1.0, 1, 8, 3,
-                "expand", 0.5, "buffer", 3, "flick-ms", 300, "min-angle", 25);
+                "tolerance", 0.3, "buffer", 1, "avg-limit", 3.0, "avg-hits", 8, "blatant", 0.9);
+        def("Hitbox", "combat", "Hits while the crosshair is not on the target, or through cobwebs / walls", true, 1.0, 1, 8, 3,
+                "expand", 0.15, "buffer", 2, "flick-ms", 0, "min-angle", 10, "web", 1, "wall", 1, "through-buffer", 1);
         def("Criticals", "combat", "Critical hits without really falling", true, 1.0, 2, 8, 4,
                 "max-fall", 0.5, "buffer", 4);
         def("Velocity", "combat", "Takes much less knockback than expected", true, 1.0, 2, 8, NO,
@@ -64,7 +69,7 @@ public final class CheckRegistry {
         def("AutoCrystal", "combat", "Places and detonates end crystals with machine timing", true, 1.0, 2, 8, NO,
                 "max-reaction-ms", 60, "buffer", 4);
         def("Backtrack", "combat", "Hits targets at positions older than lag compensation allows", true, 0.7, 1, 8, 3,
-                "extra-ms", 250, "buffer", 2);
+                "extra-ms", 120, "buffer", 2);
 
         // ---------------------------------------------------------- movement
         def("Speed", "movement", "Moves faster than vanilla physics allow", true, 1.0, 1, 8, 3,

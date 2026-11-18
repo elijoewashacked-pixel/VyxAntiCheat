@@ -16,6 +16,12 @@ permissions:
   vyxac.alerts:
     description: Receive cheat alerts
     default: op
+  vyxac.staff:
+    description: Staff mode, report tickets, freeze, inspect, staff chat
+    default: op
+  vyxac.report:
+    description: Send reports with /vac report
+    default: true
   vyxac.bypass:
     description: Not checked by VyxAC
     default: false

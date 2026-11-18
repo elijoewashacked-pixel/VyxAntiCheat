@@ -114,6 +114,8 @@ public final class PunishManager {
         TextComponent line = new TextComponent(TextComponent.fromLegacyText(plain + " "));
         line.addExtra(button("&a[Punish]", "&7Run the punishment ladder for " + pd.name, "/vyxac punish " + pd.name));
         line.addExtra(new TextComponent(" "));
+        line.addExtra(button("&6[Kick]", "&7Kick " + pd.name + " from the server", "/vyxac kick " + pd.name));
+        line.addExtra(new TextComponent(" "));
         line.addExtra(button("&e[Dismiss]", "&7Clear all violations of " + pd.name, "/vyxac dismiss " + pd.name));
         line.addExtra(new TextComponent(" "));
         line.addExtra(button("&b[TP]", "&7Teleport to " + pd.name, "/vyxac tp " + pd.name));

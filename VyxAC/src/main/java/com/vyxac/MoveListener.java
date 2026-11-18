@@ -284,7 +284,8 @@ public final class MoveListener implements Listener {
             }
         }
 
-        if (cancel) {
+        // movement setbacks are opt-in, only on the ground and never right after a launch: a setback in mid-air freezes people
+        if (cancel && s.mitigateMovement && supported && !velGrace) {
             if (now - pd.ts("mitWin") > 5000) {
                 pd.ts("mitWin", now);
                 pd.setBuf("mitN", 0);
@@ -528,6 +529,7 @@ public final class MoveListener implements Listener {
         if (!PHASE.enabled) return false;
         PlayerData pd = v.pd;
         double ady = Math.abs(v.dy);
+        if (v.velGrace) return false; // launches and knockback move players fast and close to walls
         if ((v.h < 0.01 && ady < 0.01) || v.h > 1.2 || ady > 1.2) return false; // long chords could cut corners
         if (v.now - pd.lastSticky < 2500 || pd.levitating) return false;
         MoveCtx prev = v.prev;
@@ -560,7 +562,8 @@ public final class MoveListener implements Listener {
             pd.bump("elytra", -1);
             return false;
         }
-        boolean boost = v.now - pd.lastFirework < 4000;
+        // rockets, wind charges, explosions and knockback all legitimately push an elytra pilot far beyond normal speed
+        boolean boost = v.now - pd.lastFirework < 4000 || v.now - pd.lastLaunch < 6000 || v.now - pd.lastVelocity < pl.settings().velGraceMs;
         double ticks = Math.max(v.dt, 1) / 50.0;
         double speed = v.h / ticks;
         if (!boost && speed > ELYTRA.p("max-speed")) {
@@ -581,7 +584,7 @@ public final class MoveListener implements Listener {
         if (!GROUND.enabled) return false;
         PlayerData pd = v.pd;
         MoveCtx prev = v.prev;
-        if (prev == null || v.glide) return false;
+        if (prev == null || v.glide || v.velGrace) return false;
         boolean claim = v.p.isOnGround(); // flag of the previous movement packet
         if (!claim || prev.supported || (prev.env & MoveCtx.SPECIAL) != 0 || (v.env & MoveCtx.SPECIAL) != 0) {
             pd.bump("ground", -1);
