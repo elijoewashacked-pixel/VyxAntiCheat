@@ -125,6 +125,7 @@ public final class PlayerListener implements Listener {
 
         // Freecam: the clicked face must point towards the player's eye
         if (FREECAM.enabled && e.getClickedBlock() != null && (a == Action.RIGHT_CLICK_BLOCK || a == Action.LEFT_CLICK_BLOCK)
+                && e.getClickedBlock().getType().isOccluding() && now - pd.lastBigRot > FREECAM.p("flick-ms")
                 && active(p, pd, now) && pd.ping <= pl.settings().maxPing && now - pd.lastMitigate > 1500
                 && now - pd.lastTeleport > 1500 && !p.isInsideVehicle()) {
             Block b = e.getClickedBlock();
@@ -141,9 +142,12 @@ public final class PlayerListener implements Listener {
                 default -> beyond = 0;
             }
             if (beyond < -FREECAM.p("tolerance")) {
-                if (pl.vio().flag(pd, FREECAM, String.format("clicked the %s face from %.1f blocks behind it", f.name().toLowerCase(), -beyond), 1.0)) {
-                    e.setCancelled(true);
+                if (pd.bump("freecam", 1) >= FREECAM.p("buffer")) {
+                    pd.setBuf("freecam", 0);
+                    pl.vio().flag(pd, FREECAM, String.format("clicked the %s face from %.1f blocks behind it", f.name().toLowerCase(), -beyond), 1.0);
                 }
+            } else {
+                pd.bump("freecam", -0.5);
             }
         }
     }
@@ -222,7 +226,7 @@ public final class PlayerListener implements Listener {
             }
         }
 
-        if (SCAFFOLD.enabled && pd.ping <= pl.settings().maxPing && now - pd.lastTeleport > 1500) {
+        if (SCAFFOLD.enabled && pd.ping <= pl.settings().maxPing && now - pd.lastTeleport > 1500 && now - pd.lastBigRot > SCAFFOLD.p("flick-ms")) {
             Block against = e.getBlockAgainst();
             double ex = p.getEyeLocation().getX(), ey = p.getEyeLocation().getY(), ez = p.getEyeLocation().getZ();
             double exp = SCAFFOLD.p("expand");
@@ -269,13 +273,17 @@ public final class PlayerListener implements Listener {
 
         // ---- Nuker: only breaks that the player really started (BlockDamageEvent) count; plugin multi-breaks do not
         if (NUKER.enabled && started != null) {
-            Ring r = pd.ring("break", 32);
+            Ring r = pd.ring("break", 48);
             r.add(now);
             int cnt = 0;
             for (int k = 0; k < r.size(); k++) if (now - (long) r.get(k) <= 1000) cnt++;
-            if (now - pd.ts("brkLast") <= 60) pd.bump("brkTick", 1);
-            else pd.setBuf("brkTick", 1);
-            pd.ts("brkLast", now);
+            // "same tick": packets handled in one server tick arrive within a few ms; breaks a full tick apart do NOT count
+            if (now - pd.ts("brkWin") > (long) NUKER.p("window-ms")) {
+                pd.ts("brkWin", now);
+                pd.setBuf("brkTick", 1);
+            } else {
+                pd.bump("brkTick", 1);
+            }
             if (cnt > NUKER.p("max-per-sec")) {
                 cancel |= pl.vio().flag(pd, NUKER, cnt + " blocks broken in one second", 1.0);
             } else if (pd.buf("brkTick") >= NUKER.p("same-tick")) {
@@ -376,7 +384,8 @@ public final class PlayerListener implements Listener {
         // assume the tool is the preferred one: that divides by 30 instead of 100 and gives the lowest (safest) limit
         double perTick = best / hardness / 30.0;
         if (perTick >= 1.0) return -1; // breaks instantly
-        return Math.ceil(1.0 / perTick);
+        double ticks = Math.ceil(1.0 / perTick);
+        return ticks <= 3 ? -1 : ticks; // near-instant mining (efficiency + haste) cannot be judged by timing
     }
 
     // ===================================================================================== inventories

@@ -9,8 +9,8 @@ import java.util.List;
 /** Frequently used settings, cached so event handlers never touch the YAML tree. */
 public final class Settings {
     public String prefix = "";
-    public boolean enabled, mitigation, lagProtection, bedrockExempt, logToFile, requireSwing, aiEnabled;
-    public boolean alertsDefaultOn, alertConsole, alertHover;
+    public boolean enabled, mitigation, mitigateMovement, lagProtection, bedrockExempt, logToFile, requireSwing, aiEnabled;
+    public boolean alertsDefaultOn, alertConsole, alertHover, alertButtons;
     public String bedrockPrefix, alertFormat, alertSound, webhook;
     public double minTps, decayPerMinute;
     public int maxPing, maxRewindMs, rewindExtraMs;
@@ -42,6 +42,7 @@ public final class Settings {
         alertsDefaultOn = c.getBoolean("alerts.default-on", true);
         alertConsole = c.getBoolean("alerts.console", true);
         alertHover = c.getBoolean("alerts.hover", true);
+        alertButtons = c.getBoolean("alerts.buttons", true);
         alertCooldownMs = c.getLong("alerts.cooldown-ms", 1500);
         alertSound = c.getString("alerts.sound", "");
         webhook = c.getString("alerts.discord-webhook", "");
@@ -60,6 +61,7 @@ public final class Settings {
         ladder = new ArrayList<>(c.getStringList("punishments.ladder"));
 
         mitigation = c.getBoolean("features.mitigation", true);
+        mitigateMovement = c.getBoolean("features.mitigate-movement", false);
         lagProtection = c.getBoolean("features.lag-protection", true);
         logToFile = c.getBoolean("features.log-to-file", true);
         aiEnabled = c.getBoolean("features.ai", true);

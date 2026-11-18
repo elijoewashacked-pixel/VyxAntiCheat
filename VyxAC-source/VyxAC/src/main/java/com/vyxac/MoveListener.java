@@ -10,9 +10,12 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockExplodeEvent;
 import org.bukkit.event.block.BlockPistonExtendEvent;
 import org.bukkit.event.block.BlockPistonRetractEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityExplodeEvent;
+import org.bukkit.event.entity.ProjectileHitEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerGameModeChangeEvent;
@@ -185,7 +188,7 @@ public final class MoveListener implements Listener {
         GameMode gm = p.getGameMode();
         boolean skip = gm == GameMode.CREATIVE || gm == GameMode.SPECTATOR || p.isDead() || p.isSleeping()
                 || p.getAllowFlight() || p.isFlying() || p.isInsideVehicle() || pd.exotic || p.isRiptiding();
-        boolean velGrace = now - pd.lastVelocity < s.velGraceMs || now - pd.lastGlide < 2500;
+        boolean velGrace = now - pd.lastVelocity < s.velGraceMs || now - pd.lastGlide < 2500 || now - pd.lastLaunch < 6000;
         // a connection stall while moving (silence >= 0.8s after a moving event) is followed by a burst of queued packets
         // that looks exactly like speed/timer: suspend the checks for a moment. Standing still does NOT earn this.
         if (dt >= 800 && pd.lastMoveMs != 0 && pd.lastH >= 0.15) pd.ts("gapAt", now);
@@ -281,15 +284,23 @@ public final class MoveListener implements Listener {
             }
         }
 
-        if (cancel) {
-            pd.lastMitigate = now;
-            pd.speedDebt = 0;
-            e.setCancelled(true); // the server moves the player back to the previous position
-            return;
+        // movement setbacks are opt-in, only on the ground and never right after a launch: a setback in mid-air freezes people
+        if (cancel && s.mitigateMovement && supported && !velGrace) {
+            if (now - pd.ts("mitWin") > 5000) {
+                pd.ts("mitWin", now);
+                pd.setBuf("mitN", 0);
+            }
+            if (pd.bump("mitN", 1) <= 3) { // never rubber-band a player endlessly: after 3 setbacks the flags still count, the moves are allowed
+                pd.lastMitigate = now;
+                pd.speedDebt = 0;
+                e.setCancelled(true); // the server moves the player back to the previous position
+                return;
+            }
         }
         pd.prev = new MoveCtx(now, tx, ty, tz, to.getYaw(), to.getPitch(), env, supported);
         pd.lastMoveMs = now;
         pd.lastDy = dy;
+        pd.lastTicks = (int) Math.max(1, Math.min(6, Math.round(dt / 50.0)));
         pd.lastH = h;
         pd.recordPos(now, tx, ty, tz);
     }
@@ -375,19 +386,29 @@ public final class MoveListener implements Listener {
             pd.hoverTicks = 0;
             return false;
         }
-        if (v.now - pd.lastVelocity < pl.settings().velGraceMs + 1500 || v.now - pd.lastBounce < 6000) return false;
+        if (v.velGrace || v.now - pd.lastVelocity < pl.settings().velGraceMs + 1500 || v.now - pd.lastBounce < 6000) return false;
         boolean cancel = false;
         double x = v.to.getX(), y = v.to.getY(), z = v.to.getZ();
 
-        // rising higher than a jump can possibly reach
+        // rising higher than a jump can possibly reach AND not following normal gravity.
+        // A player launched by a wind charge, explosion, slime or an unknown plugin still follows vanilla gravity
+        // (dy[t+1] = (dy[t] - 0.08) * 0.98); a fly hack does not.
+        boolean ballistic = Math.abs(v.dy - predictDy(pd.lastDy, pd.lastTicks, v.dt)) <= 0.07 + 0.03 * (Math.max(1, Math.min(6, Math.round(v.dt / 50.0))) - 1);
         if (pd.hasGroundY) {
             double rise = y - pd.groundY;
             double apex = Compat.jumpApex(pd.jumpLvl, pd.jumpStrength);
             double lim = apex + FLY.p("tolerance");
-            if (rise > lim && !Phys.entitySupport(v.p)) {
-                boolean wall = Phys.wallNear(v.w, x, y, z);
-                CheckInfo ci = wall ? SPIDER : FLY;
-                cancel |= pl.vio().flag(pd, ci, String.format("rose %.2f blocks (jump limit %.2f)", rise, apex), Math.min(3.0, 1.0 + (rise - lim)));
+            if (rise > lim && !ballistic) {
+                if (pd.bump("flyrise", 1) >= FLY.p("rise-buffer")) {
+                    pd.setBuf("flyrise", 0);
+                    if (!Phys.entitySupport(v.p)) {
+                        boolean wall = Phys.wallNear(v.w, x, y, z);
+                        CheckInfo ci = wall ? SPIDER : FLY;
+                        cancel |= pl.vio().flag(pd, ci, String.format("rose %.2f blocks (jump limit %.2f) without following gravity", rise, apex), Math.min(3.0, 1.0 + (rise - lim)));
+                    }
+                }
+            } else {
+                pd.bump("flyrise", -1);
             }
         }
         // hovering: (nearly) no vertical movement for many events while unsupported
@@ -402,6 +423,22 @@ public final class MoveListener implements Listener {
             }
         }
         return cancel;
+    }
+
+    /**
+     * Vertical displacement vanilla gravity would produce over the ticks covered by one move event.
+     * The previous event may itself span several ticks, so its last-tick velocity is estimated first.
+     */
+    private static double predictDy(double lastDy, int lastTicks, long dtMs) {
+        double avg = lastDy / Math.max(1, lastTicks);
+        double vy = avg - (Math.max(1, lastTicks) - 1) / 2.0 * (0.0784 + 0.02 * avg);
+        int n = (int) Math.max(1, Math.min(6, Math.round(dtMs / 50.0)));
+        double sum = 0;
+        for (int i = 0; i < n; i++) {
+            vy = (vy - 0.08) * 0.98;
+            sum += vy;
+        }
+        return sum;
     }
 
     private boolean step(Ev v) {
@@ -492,6 +529,7 @@ public final class MoveListener implements Listener {
         if (!PHASE.enabled) return false;
         PlayerData pd = v.pd;
         double ady = Math.abs(v.dy);
+        if (v.velGrace) return false; // launches and knockback move players fast and close to walls
         if ((v.h < 0.01 && ady < 0.01) || v.h > 1.2 || ady > 1.2) return false; // long chords could cut corners
         if (v.now - pd.lastSticky < 2500 || pd.levitating) return false;
         MoveCtx prev = v.prev;
@@ -524,7 +562,8 @@ public final class MoveListener implements Listener {
             pd.bump("elytra", -1);
             return false;
         }
-        boolean boost = v.now - pd.lastFirework < 4000;
+        // rockets, wind charges, explosions and knockback all legitimately push an elytra pilot far beyond normal speed
+        boolean boost = v.now - pd.lastFirework < 4000 || v.now - pd.lastLaunch < 6000 || v.now - pd.lastVelocity < pl.settings().velGraceMs;
         double ticks = Math.max(v.dt, 1) / 50.0;
         double speed = v.h / ticks;
         if (!boost && speed > ELYTRA.p("max-speed")) {
@@ -545,7 +584,7 @@ public final class MoveListener implements Listener {
         if (!GROUND.enabled) return false;
         PlayerData pd = v.pd;
         MoveCtx prev = v.prev;
-        if (prev == null || v.glide) return false;
+        if (prev == null || v.glide || v.velGrace) return false;
         boolean claim = v.p.isOnGround(); // flag of the previous movement packet
         if (!claim || prev.supported || (prev.env & MoveCtx.SPECIAL) != 0 || (v.env & MoveCtx.SPECIAL) != 0) {
             pd.bump("ground", -1);
@@ -617,16 +656,24 @@ public final class MoveListener implements Listener {
         boolean cancel = false;
         double ticks = r.ticks();
         double eff = effSpeed(v.p);
-        if (LONGJUMP.enabled && r.events >= 3) {
-            double allowed = eff * 2.16 * LONGJUMP.p("leniency") * ticks + LONGJUMP.p("slack");
+        // lenient basis: assume the sprint bonus is not yet part of the attribute
+        double effL = Compat.attrValue(v.p, 0.1, "GENERIC_MOVEMENT_SPEED", "MOVEMENT_SPEED") * 1.3;
+        boolean droppedDown = r.startY - r.endY > 0.5; // jumping DOWN from a ledge is not a long jump
+        if (LONGJUMP.enabled && r.events >= 3 && !droppedDown) {
+            double allowed = effL * 2.16 * LONGJUMP.p("leniency") * ticks + LONGJUMP.p("slack");
             if (r.hDist > allowed) {
-                cancel |= pl.vio().flag(pd, LONGJUMP, String.format("jumped %.1f blocks in %.0f ticks (limit %.1f)", r.hDist, ticks, allowed),
-                        Math.min(3.0, 1.0 + (r.hDist - allowed) / 2.0));
+                if (pd.bump("lj", 1) >= LONGJUMP.p("buffer")) {
+                    pd.setBuf("lj", 0);
+                    cancel |= pl.vio().flag(pd, LONGJUMP, String.format("jumped %.1f blocks in %.0f ticks (limit %.1f)", r.hDist, ticks, allowed),
+                            Math.min(3.0, 1.0 + (r.hDist - allowed) / 2.0));
+                }
+            } else {
+                pd.bump("lj", -0.5);
             }
         }
-        if (BHOP.enabled && r.events >= 4) {
+        if (BHOP.enabled && r.events >= 4 && !droppedDown) {
             double avg = r.hDist / ticks;
-            if (avg > eff * 2.16 * BHOP.p("leniency")) {
+            if (avg > effL * 2.16 * BHOP.p("leniency")) {
                 if (++pd.hopRuns >= (int) BHOP.p("runs")) {
                     pd.hopRuns = 0;
                     cancel |= pl.vio().flag(pd, BHOP, String.format("%.2f b/tick average over consecutive hops", avg), 1.0);
@@ -825,6 +872,31 @@ public final class MoveListener implements Listener {
         for (Player p : w.getPlayers()) {
             if (p.getLocation().distanceSquared(b.getLocation()) < 49) pl.data(p).lastSticky = now;
         }
+    }
+
+    private void markLaunch(Location l, double radius) {
+        World w = l.getWorld();
+        if (w == null) return;
+        long now = System.currentTimeMillis();
+        double r2 = radius * radius;
+        for (Player p : w.getPlayers()) {
+            if (p.getLocation().distanceSquared(l) <= r2) pl.data(p).lastLaunch = now;
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onExplode(EntityExplodeEvent e) {
+        markLaunch(e.getLocation(), 12);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onBlockExplode(BlockExplodeEvent e) {
+        markLaunch(e.getBlock().getLocation(), 12);
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onProjectileHit(ProjectileHitEvent e) {
+        if (e.getEntity().getType().name().contains("WIND_CHARGE")) markLaunch(e.getEntity().getLocation(), 8);
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

@@ -102,6 +102,7 @@ public final class PunishManager {
         } else { // REVIEW
             if (now - pd.reviewPromptAt < s.reviewCooldownMs) return;
             pd.reviewPromptAt = now;
+            pl.diagnostics().onReview();
             review(pd, ev);
         }
     }
@@ -112,6 +113,8 @@ public final class PunishManager {
                 + ", ping " + pd.ping + ")");
         TextComponent line = new TextComponent(TextComponent.fromLegacyText(plain + " "));
         line.addExtra(button("&a[Punish]", "&7Run the punishment ladder for " + pd.name, "/vyxac punish " + pd.name));
+        line.addExtra(new TextComponent(" "));
+        line.addExtra(button("&6[Kick]", "&7Kick " + pd.name + " from the server", "/vyxac kick " + pd.name));
         line.addExtra(new TextComponent(" "));
         line.addExtra(button("&e[Dismiss]", "&7Clear all violations of " + pd.name, "/vyxac dismiss " + pd.name));
         line.addExtra(new TextComponent(" "));
@@ -141,6 +144,7 @@ public final class PunishManager {
                 .replace("%check%", check == null || check.isEmpty() ? "VyxAC" : check)
                 .replace("%vl%", String.format("%.0f", pd.totalVl())));
         pd.strikes++;
+        pl.diagnostics().onPunish();
         pd.lastPunishMs = now;
         String line = "PUNISH " + pd.name + " step=" + (step + 1) + (manual ? " (manual)" : " (" + s.punishMode + ")") + " cmd=" + cmd;
         pl.vio().log(line);
@@ -151,6 +155,7 @@ public final class PunishManager {
     }
 
     public void dismiss(PlayerData pd) {
+        pl.diagnostics().onDismiss();
         pd.clearViolations();
         pd.reviewPromptAt = 0;
     }

@@ -83,7 +83,7 @@ public final class PacketChecks {
         if (w == null) return;
         boolean still = pd.sampleY != 0 && Math.abs(l.getY() - pd.sampleY) < 0.0001;
         pd.sampleY = l.getY();
-        if (!still || now - pd.lastTeleport < 5000 || now - pd.lastVelocity < 4000 || now - pd.lastSticky < 4000
+        if (!still || now - pd.lastTeleport < 5000 || now - pd.lastVelocity < 4000 || now - pd.lastLaunch < 8000 || now - pd.lastSticky < 4000
                 || now - pd.lastFlight < 4000 || now - pd.lastVehicle < 4000 || now - pd.lastRespawn < 5000) {
             pd.sampleStill = 0;
             return;

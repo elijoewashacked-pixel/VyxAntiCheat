@@ -26,7 +26,8 @@ violations:
 alerts:
   default-on: true
   console: true
-  hover: true                 # hover = details, click = teleport to player
+  hover: true                 # hover over an alert for details
+  buttons: true               # [Punish] [Kick] [Teleport] buttons on every alert
   cooldown-ms: 1500           # per player+check
   sound: ""                   # e.g. block.note_block.pling  (empty = off)
   discord-webhook: ""
@@ -50,10 +51,34 @@ punishments:
     - "ban %player% &c[VyxAC] Unfair advantage detected (%check%). Appeal if this is a mistake."
 
 features:
-  mitigation: true            # rubber-band flagged moves, cancel hits/blocks from flagged actions
+  mitigation: true            # cancel hits / blocks from flagged combat and world actions
+  mitigate-movement: false    # also move players back on flagged MOVEMENT (can feel like rubber-banding: leave off unless you need it)
   lag-protection: true
   log-to-file: true
   ai: true
+
+reports:
+  enabled: true
+  cooldown-seconds: 60        # between two reports of the same player
+  max-open-per-player: 3
+  notify-staff: true          # tell online staff when a report arrives
+  discord: true               # also post new reports to the Discord webhook
+  show-staff-name: true       # tell the reporter which staff member answered
+  keep-closed-days: 14
+  messages:
+    submitted: "&aReport #%id% against &f%target% &asent. Staff will review it. Thank you!"
+    dismissed: "&7Your report #%id% against &f%target% &7was reviewed: no violation was found. %note%"
+    actioned: "&aYour report #%id% against &f%target% &awas reviewed and action was taken. %note%"
+    reply: "&b[Reports] &f%staff% &7replied on #%id%: &f%message%"
+
+staff:
+  chat-format: "&8[&cStaff&8] &f%player%&8: &7%message%"
+  freeze-quit-command: ""     # runs when a frozen player logs out, e.g. "ban %player% Logged out while frozen" (empty = nothing)
+
+diagnostics:
+  enabled: true               # daily report in plugins/VyxAC/diagnostics/ (which checks look noisy, who looks like a cheater)
+  notify-staff: true          # tell admins when the daily report is ready
+  console: true               # print the report summary to the console
 
 ai:
   interval-seconds: 4

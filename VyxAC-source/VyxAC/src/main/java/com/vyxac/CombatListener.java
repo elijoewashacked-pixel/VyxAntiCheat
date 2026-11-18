@@ -3,6 +3,8 @@ package com.vyxac;
 import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.entity.EnderCrystal;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
@@ -85,6 +87,48 @@ public final class CombatListener implements Listener {
         return false;
     }
 
+    /** Entry distance of the ray into the target box over the lag window (smallest = most lenient), or -1 */
+    private static double rayHitT(double ox, double oy, double oz, double dx, double dy, double dz, double maxT,
+                                  PlayerData t, Player tp, long now, long windowMs, double expand) {
+        double hw = 0.3 * t.scale + expand, hh = 1.8 * t.scale + expand;
+        Location cur = tp.getLocation();
+        double best = Geo.rayBoxT(ox, oy, oz, dx, dy, dz, maxT, cur.getX() - hw, cur.getY() - expand, cur.getZ() - hw,
+                cur.getX() + hw, cur.getY() + hh, cur.getZ() + hw);
+        for (int i = 0; i < t.hCount; i++) {
+            int k = t.histIdx(i);
+            boolean past = now - t.hT[k] > windowMs;
+            double r = Geo.rayBoxT(ox, oy, oz, dx, dy, dz, maxT, t.hX[k] - hw, t.hY[k] - expand, t.hZ[k] - hw,
+                    t.hX[k] + hw, t.hY[k] + hh, t.hZ[k] + hw);
+            if (r >= 0 && (best < 0 || r < best)) best = r;
+            if (past) break;
+        }
+        return best;
+    }
+
+    /** Walks along the camera ray like the client does: 0 = clear, 1 = a cobweb is in the way, 2 = a solid wall is in the way. */
+    private static int occlusion(World w, double ox, double oy, double oz, double dx, double dy, double dz, double t) {
+        if (t < 1.0) return 0;
+        int webRun = 0, wallRun = 0;
+        for (double d = 0.35; d < t - 0.35; d += 0.2) { // ends and corners are ignored on purpose
+            Block b = Phys.at(w, Phys.floor(ox + dx * d), Phys.floor(oy + dy * d), Phys.floor(oz + dz * d));
+            if (b == null) {
+                webRun = wallRun = 0;
+                continue;
+            }
+            Material m = b.getType();
+            if (m == Material.COBWEB) {
+                wallRun = 0;
+                if (++webRun >= 2) return 1;
+            } else if (m.isOccluding()) {
+                webRun = 0;
+                if (++wallRun >= 4) return 2;
+            } else {
+                webRun = wallRun = 0;
+            }
+        }
+        return 0;
+    }
+
     // ===================================================================================== swings
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -109,6 +153,7 @@ public final class CombatListener implements Listener {
         Entity target = e.getEntity();
         long prevAttack = pd.lastAttackMs;
         pd.lastAttackMs = now;
+        if (p.getInventory().getItemInMainHand().getType().name().equals("MACE")) pd.lastLaunch = now; // wind burst launches the attacker
 
         try {
             if (target instanceof EnderCrystal) {
@@ -250,32 +295,85 @@ public final class CombatListener implements Listener {
         long normal = Math.max(100, Math.min(s.maxRewindMs, pd.ping + s.rewindExtraMs));
         double limit = pd.reachEntity + REACH.p("tolerance");
         double minNorm = minDist(pd2, tp, ex, ey, ez, now, normal);
+
+        // ---- Reach statistic: legit fighters average well below 3 blocks, a reach cheater hovers just above it
+        if (REACH.enabled) {
+            Ring ra = pd.ring("reachAvg", (int) Math.max(4, REACH.p("avg-hits")));
+            ra.add(minNorm);
+            if (ra.full() && ra.mean() > REACH.p("avg-limit")) {
+                String info = String.format("average hit distance %.2f blocks over %d hits", ra.mean(), ra.size());
+                ra.clear();
+                cancel |= pl.vio().flag(pd, REACH, info, 1.5);
+            }
+        }
+
+        // ---- Reach / Backtrack: out of range even with the lag-compensated positions of the target
         if (minNorm > limit) {
             long ext = normal + (long) BACK.p("extra-ms");
             double minExt = minDist(pd2, tp, ex, ey, ez, now, ext);
-            if (BACK.enabled && minExt <= limit) {
+            boolean rescued = minExt <= limit; // a slightly older position would have been in range
+            boolean blatant = minNorm > limit + REACH.p("blatant"); // too far for lag to explain
+            if (!rescued || blatant) {
+                if (REACH.enabled && pd.bump("reach", 1) >= REACH.p("buffer")) {
+                    pd.setBuf("reach", 0);
+                    cancel |= pl.vio().flag(pd, REACH, String.format("%.2f blocks (limit %.2f)", minNorm, limit), Math.min(4.0, 1.0 + (minNorm - limit) * 2));
+                }
+            } else if (BACK.enabled && pd.bump("back", 1) >= BACK.p("buffer")) {
+                pd.setBuf("back", 0);
                 cancel |= pl.vio().flag(pd, BACK, String.format("hit needs a position older than %dms (%.2f blocks away now)", normal, minNorm), 1.0);
-            } else if (REACH.enabled) {
-                cancel |= pl.vio().flag(pd, REACH, String.format("%.2f blocks (limit %.2f)", minNorm, limit), Math.min(4.0, 1.0 + (minNorm - limit) * 2));
             }
-            return cancel;
+        } else {
+            pd.bump("reach", -0.5);
+            pd.bump("back", -0.5);
         }
 
-        // Hitbox: the crosshair (current or previous camera, current or previous eye) must be on the lag-compensated box
-        if (HITBOX.enabled && dist > 0.5) {
-            double maxT = limit + 1.5;
+        // ---- Hitbox: the crosshair must have been on the target. The server's copy of the camera can lag the client's by one
+        // flick, so every angle swept since the previous movement packet is accepted (flicks stay legal, silent aim does not).
+        if (HITBOX.enabled && dist > 0.5 && now - pd.lastBigRot >= HITBOX.p("flick-ms")) {
+            double maxT = Math.max(limit, minNorm) + 1.5;
             double expand = HITBOX.p("expand");
-            boolean hit = rayHit(ex, ey, ez, ldx, ldy, ldz, maxT, pd2, tp, now, normal, expand);
             MoveCtx prev = pd.prev;
-            if (!hit && prev != null) {
-                double pdx = Geo.dirX(prev.yaw, prev.pitch), pdy = Geo.dirY(prev.pitch), pdz = Geo.dirZ(prev.yaw, prev.pitch);
-                double eh = p.getEyeHeight();
-                hit = rayHit(ex, ey, ez, pdx, pdy, pdz, maxT, pd2, tp, now, normal, expand)
-                        || rayHit(prev.x, prev.y + eh, prev.z, pdx, pdy, pdz, maxT, pd2, tp, now, normal, expand)
-                        || rayHit(prev.x, prev.y + eh, prev.z, ldx, ldy, ldz, maxT, pd2, tp, now, normal, expand);
+            boolean usePrev = prev != null && now - prev.time < 150;
+            double eh = p.getEyeHeight();
+            double[] best = null; // {t, originXYZ, directionXYZ}
+            int rays = usePrev ? 6 : 1;
+            for (int i = 0; i < rays && best == null; i++) {
+                float yw = yaw, pt = pitch;
+                if (i > 0) {
+                    float f = (i - 1) / 5.0f; // previous camera ... almost the current camera
+                    yw = prev.yaw + Geo.wrap(yaw - prev.yaw) * f;
+                    pt = prev.pitch + (pitch - prev.pitch) * f;
+                }
+                double rdx = Geo.dirX(yw, pt), rdy = Geo.dirY(pt), rdz = Geo.dirZ(yw, pt);
+                double t = rayHitT(ex, ey, ez, rdx, rdy, rdz, maxT, pd2, tp, now, normal, expand);
+                if (t >= 0) {
+                    best = new double[]{t, ex, ey, ez, rdx, rdy, rdz};
+                } else if (usePrev) {
+                    t = rayHitT(prev.x, prev.y + eh, prev.z, rdx, rdy, rdz, maxT, pd2, tp, now, normal, expand);
+                    if (t >= 0) best = new double[]{t, prev.x, prev.y + eh, prev.z, rdx, rdy, rdz};
+                }
             }
-            if (!hit) {
-                cancel |= pl.vio().flag(pd, HITBOX, String.format("crosshair %.0f degrees off the target", aimErr), 1.0);
+            if (best == null) {
+                if (aimErr > HITBOX.p("min-angle")) {
+                    if (pd.bump("hitbox", 1) >= HITBOX.p("buffer")) {
+                        pd.setBuf("hitbox", 0);
+                        cancel |= pl.vio().flag(pd, HITBOX, String.format("crosshair %.0f degrees off the target", aimErr), 1.0);
+                    }
+                } else {
+                    pd.bump("hitbox", -0.5);
+                }
+            } else {
+                pd.bump("hitbox", -0.5);
+                // blocks between the player and the target along the very ray that hit it
+                int occ = occlusion(p.getWorld(), best[1], best[2], best[3], best[4], best[5], best[6], best[0]);
+                if ((occ == 1 && HITBOX.p("web") > 0) || (occ == 2 && HITBOX.p("wall") > 0)) {
+                    if (pd.bump("hbthru", 1) >= HITBOX.p("through-buffer")) {
+                        pd.setBuf("hbthru", 0);
+                        cancel |= pl.vio().flag(pd, HITBOX, occ == 1 ? "hit a player through a cobweb" : "hit a player through a wall", 2.0);
+                    }
+                } else {
+                    pd.bump("hbthru", -0.5);
+                }
             }
         }
 

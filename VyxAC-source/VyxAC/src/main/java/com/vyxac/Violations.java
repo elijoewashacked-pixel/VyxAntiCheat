@@ -64,7 +64,9 @@ public final class Violations {
         if (v >= ci.alertVl) alert(pd, ci, info, v, now);
         logLine(pd, ci, info, v);
         if (ci.punishable) pl.punish().evaluate(pd);
-        return s.mitigation && v >= ci.mitigateVl;
+        boolean mit = s.mitigation && v >= ci.mitigateVl;
+        pl.diagnostics().onFlag(pd, ci, v, mit);
+        return mit;
     }
 
     /** Called once per second: every VL decays a little so old, isolated flags disappear. */
@@ -114,10 +116,19 @@ public final class Violations {
                 + "\n&eClick to teleport");
         for (Player st : Bukkit.getOnlinePlayers()) {
             if (!st.hasPermission("vyxac.alerts") || !alertsEnabled(st.getUniqueId())) continue;
-            if (s.alertHover) {
+            if (s.alertHover || s.alertButtons) {
                 TextComponent tc = new TextComponent(TextComponent.fromLegacyText(msg));
-                tc.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text(hover)));
-                tc.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/vyxac tp " + pd.name));
+                if (s.alertHover) tc.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text(hover)));
+                if (s.alertButtons) {
+                    tc.addExtra(new TextComponent(" "));
+                    tc.addExtra(button("&c[Punish]", "&7Run the punishment ladder for " + pd.name, "/vyxac punish " + pd.name));
+                    tc.addExtra(new TextComponent(" "));
+                    tc.addExtra(button("&e[Kick]", "&7Kick " + pd.name + " from the server", "/vyxac kick " + pd.name));
+                    tc.addExtra(new TextComponent(" "));
+                    tc.addExtra(button("&b[Teleport]", "&7Teleport to " + pd.name, "/vyxac tp " + pd.name));
+                } else {
+                    tc.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/vyxac tp " + pd.name));
+                }
                 st.spigot().sendMessage(tc);
             } else {
                 st.sendMessage(msg);
@@ -131,6 +142,41 @@ public final class Violations {
             }
         }
         webhook(ChatColor.stripColor(msg));
+    }
+
+    private static TextComponent button(String label, String hover, String cmd) {
+        TextComponent b = new TextComponent(TextComponent.fromLegacyText(Settings.color(label)));
+        b.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text(Settings.color(hover))));
+        b.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, cmd));
+        return b;
+    }
+
+    public boolean webhookConfigured() {
+        String u = pl.settings().webhook;
+        return u != null && (u.startsWith("https://discord.com/api/webhooks/") || u.startsWith("https://discordapp.com/api/webhooks/"));
+    }
+
+    /** like webhook() but ignores the 2 second rate limit (used by /vyxac test) */
+    public void webhookNow(String text) {
+        lastWebhook = 0;
+        webhook(text);
+    }
+
+    /** Sends an alert that looks real but records nothing (no VL, no history, no webhook). */
+    public void testAlert(CheckInfo ci, String info, String who) {
+        Settings s = pl.settings();
+        String msg = Settings.color("&e[TEST] " + s.alertFormat
+                .replace("%player%", who)
+                .replace("%check%", ci.name)
+                .replace("%info%", info)
+                .replace("%vl%", "0.0")
+                .replace("%punish_vl%", ci.punishable ? String.format("%.0f", ci.punishVl) : "-")
+                .replace("%ping%", "0")
+                .replace("%tps%", String.format("%.1f", pl.ticks().tps())));
+        Bukkit.getConsoleSender().sendMessage(msg);
+        for (Player st : Bukkit.getOnlinePlayers()) {
+            if (st.hasPermission("vyxac.alerts") && alertsEnabled(st.getUniqueId())) st.sendMessage(msg);
+        }
     }
 
     /** Sends a clickable message to every staff member that has alerts enabled. */
