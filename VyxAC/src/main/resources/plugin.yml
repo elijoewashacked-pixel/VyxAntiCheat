@@ -4,7 +4,24 @@ main: com.vyxac.VyxAC
 api-version: "1.20"
 author: VyxAC
 description: Lightweight, false-positive-averse anticheat with a low-CPU anomaly model.
+softdepend: [ProtocolLib, PlaceholderAPI, Floodgate, Vulcan, Spartan, Matrix, GrimAC]
 commands:
+  checkhacks:
+    description: Detect hacked clients with the sign translation check
+    usage: /checkhacks <player> [mods|category|all]
+    aliases: [chk]
+  chalerts:
+    description: Toggle CheckHacks alerts
+    usage: /chalerts
+  cheditor:
+    description: One-time login link for the web editor
+    usage: /cheditor
+  checkhacksupdate:
+    description: Download the latest release
+    usage: /checkhacksupdate
+  checklang:
+    description: Show the client language of a player
+    usage: /checklang <player>
   vyxac:
     description: VyxAC main command
     usage: /vyxac help
@@ -25,3 +42,27 @@ permissions:
   vyxac.bypass:
     description: Not checked by VyxAC
     default: false
+  checkhacks.use:
+    description: Start client mod checks
+    default: op
+  checkhacks.alerts:
+    description: Receive CheckHacks results
+    default: op
+  checkhacks.editor:
+    description: Use /cheditor
+    default: op
+  checkhacks.update:
+    description: Use /checkhacksupdate and see the update notice
+    default: op
+  checkhacks.admin:
+    description: probe, reload and everything else of CheckHacks
+    default: op
+  checkhacks.*:
+    description: All CheckHacks permissions
+    default: op
+    children:
+      checkhacks.use: true
+      checkhacks.alerts: true
+      checkhacks.editor: true
+      checkhacks.update: true
+      checkhacks.admin: true

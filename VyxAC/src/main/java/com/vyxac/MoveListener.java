@@ -163,6 +163,7 @@ public final class MoveListener implements Listener {
             }
         }
         pd.lastDYaw = yawD;
+        if (now - pd.lastAttackMs < 1500) pl.ai().onRotation(pd, yawD, pitchD);
         double rot = Math.abs(yawD) + Math.abs(pitchD);
         if (rot >= 8) {
             pd.lastBigRot = now;

@@ -1,5 +1,8 @@
 package com.vyxac;
 
+import com.vyxac.hacks.HackChecker;
+import com.vyxac.hacks.HackCommands;
+import com.vyxac.hacks.HackListener;
 import org.bukkit.Bukkit;
 import org.bukkit.command.PluginCommand;
 import org.bukkit.entity.Player;
@@ -23,6 +26,7 @@ public final class VyxAC extends JavaPlugin {
     private ReportManager reports;
     private StaffManager staff;
     private StaffGui staffGui;
+    private HackChecker hacks;
 
     @Override
     public void onEnable() {
@@ -43,6 +47,7 @@ public final class VyxAC extends JavaPlugin {
         staff = new StaffManager(this);
         staffGui = new StaffGui(this);
         loadAll();
+        ai.loadModel();
         reports.load();
 
         for (Player p : Bukkit.getOnlinePlayers()) data(p);
@@ -54,6 +59,18 @@ public final class VyxAC extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(gui, this);
         Bukkit.getPluginManager().registerEvents(staffGui, this);
         Bukkit.getPluginManager().registerEvents(new StaffListener(this, staffGui), this);
+
+        hacks = new HackChecker(this);
+        hacks.start();
+        Bukkit.getPluginManager().registerEvents(new HackListener(this), this);
+        HackCommands hackCmd = new HackCommands(this);
+        for (String n : new String[]{"checkhacks", "chalerts", "cheditor", "checkhacksupdate", "checklang"}) {
+            PluginCommand hc = getCommand(n);
+            if (hc != null) {
+                hc.setExecutor(hackCmd);
+                hc.setTabCompleter(hackCmd);
+            }
+        }
 
         VyxCommand cmd = new VyxCommand(this, gui, new ExtraCommands(this, staffGui, new SelfTest(this)));
         PluginCommand pc = getCommand("vyxac");
@@ -76,7 +93,11 @@ public final class VyxAC extends JavaPlugin {
 
     @Override
     public void onDisable() {
-        if (ai != null) ai.stop();
+        if (ai != null) {
+            ai.stop();
+            ai.saveModel();
+        }
+        if (hacks != null) hacks.stop();
         if (staff != null) staff.exitAll(); // everybody gets their real inventory back
         if (reports != null) reports.save();
         if (diagnostics != null) diagnostics.finish(true); // partial report of the current day
@@ -124,6 +145,8 @@ public final class VyxAC extends JavaPlugin {
     public ReportManager reports() { return reports; }
     public StaffManager staff() { return staff; }
     public StaffGui staffGui() { return staffGui; }
+    public HackChecker hacks() { return hacks; }
+    public java.io.File jarFile() { return getFile(); }
 
     public PlayerData data(Player p) {
         PlayerData pd = data.get(p.getUniqueId());

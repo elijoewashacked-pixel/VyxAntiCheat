@@ -137,6 +137,7 @@ public final class CombatListener implements Listener {
         PlayerData pd = pl.data(e.getPlayer());
         pd.lastSwingMs = System.currentTimeMillis();
         pd.evSwings++;
+        pl.ai().onSwing(pd, pd.lastSwingMs);
     }
 
     // ===================================================================================== hits
@@ -228,7 +229,7 @@ public final class CombatListener implements Listener {
         }
 
         // ---------------------------------------------------------------- mini AI sample
-        pl.ai().onHit(pd, aimErr, now, reaction);
+        pl.ai().onHitEx(pd, aimErr, now, reaction, pd.lastBigRotDeg, -1);
 
         // ---------------------------------------------------------------- TriggerBot (constant, very short reaction)
         if (TRIG.enabled && reaction >= 0) {
@@ -295,6 +296,7 @@ public final class CombatListener implements Listener {
         long normal = Math.max(100, Math.min(s.maxRewindMs, pd.ping + s.rewindExtraMs));
         double limit = pd.reachEntity + REACH.p("tolerance");
         double minNorm = minDist(pd2, tp, ex, ey, ez, now, normal);
+        pd.ai.addReach(minNorm);
 
         // ---- Reach statistic: legit fighters average well below 3 blocks, a reach cheater hovers just above it
         if (REACH.enabled) {

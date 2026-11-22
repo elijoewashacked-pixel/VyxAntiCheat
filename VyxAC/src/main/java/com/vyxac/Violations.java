@@ -66,6 +66,7 @@ public final class Violations {
         if (ci.punishable) pl.punish().evaluate(pd);
         boolean mit = s.mitigation && v >= ci.mitigateVl;
         pl.diagnostics().onFlag(pd, ci, v, mit);
+        if (pl.hacks() != null && !ci.name.equals("HackClient")) pl.hacks().onVyxacFlag(pd, pd.totalVl());
         return mit;
     }
 

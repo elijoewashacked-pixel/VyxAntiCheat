@@ -145,6 +145,7 @@ public final class PunishManager {
                 .replace("%vl%", String.format("%.0f", pd.totalVl())));
         pd.strikes++;
         pl.diagnostics().onPunish();
+        pl.ai().label(pd, true, manual ? "staff punish" : "auto punish");
         pd.lastPunishMs = now;
         String line = "PUNISH " + pd.name + " step=" + (step + 1) + (manual ? " (manual)" : " (" + s.punishMode + ")") + " cmd=" + cmd;
         pl.vio().log(line);
@@ -156,6 +157,7 @@ public final class PunishManager {
 
     public void dismiss(PlayerData pd) {
         pl.diagnostics().onDismiss();
+        pl.ai().label(pd, false, "staff dismiss");
         pd.clearViolations();
         pd.reviewPromptAt = 0;
     }

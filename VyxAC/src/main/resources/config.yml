@@ -81,8 +81,10 @@ diagnostics:
   console: true               # print the report summary to the console
 
 ai:
-  interval-seconds: 4
-  min-attacks: 20
+  interval-seconds: 3
+  min-attacks: 16
   sensitivity: 1.0            # higher = stricter
   alert-confidence: 0.88
-  max-micros-per-second: 3000 # hard CPU budget for all AI work per second
+  max-micros-per-second: 8000 # hard CPU budget for all AI work per second
+  deep: true                  # ten features: entropy, mouse-step quantisation, accuracy, snap, reach, self-history
+  learning: true              # the model learns from staff Punish / Dismiss and from confirmed hack clients

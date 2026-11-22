@@ -2,7 +2,7 @@
 
 ## Build and install
 1. Needs JDK 17+ and Maven. In this folder run: `mvn package`
-2. Copy `target/VyxAC-1.1.0.jar` into your server's `plugins/` folder, start the server once.
+2. Copy `target/VyxAC-1.2.0.jar` into your server's `plugins/` folder, start the server once.
 3. Edit `plugins/VyxAC/config.yml` (every check gets its own section on first start) or use `/vyxac`.
 
 Optional pom change: set `spigot-api` to the version you run (1.21.x works too, Java 21 on the server is fine).
@@ -64,3 +64,43 @@ Plus the pseudo-check `AI`.
 * Plugins that break many blocks or deal damage via API (VeinMiner, skill plugins) can look like Nuker / MultiAura:
   give those players `vyxac.bypass` or disable that check. `general.require-swing` already ignores most API damage.
 * Bedrock players (Floodgate prefix, default `.`) are exempt.
+
+## 1.1.1: reports, staff mode, self-test
+* `/vac report <player> <reason>` - players report; staff get a clickable ticket with a VyxAC evidence snapshot.
+* `/vyxac reports` - ticket GUI: claim, reply (typed in chat), dismiss, close as "action taken", reopen. Answers reach the reporter even if they are offline.
+* `/vyxac staff` - vanish + flight + invulnerability + hotbar tools (reports, players, inspect, freeze, inventory viewer, random teleport, staff chat, vanish toggle, leave). The real inventory is saved on disk and restored on exit, quit, plugin disable and after a crash.
+* `/vyxac staff freeze|inspect|chat|note|notes|rtp|players|list` - more staff tools.
+* `/vac test` - self-test: alerts, webhook, punishment ladder dry run. Nobody is punished.
+* Permissions: `vyxac.staff` (op), `vyxac.report` (everyone), `vyxac.admin`.
+
+## Combat accuracy (1.1.1)
+* **Reach**: default tolerance 0.3 blocks, flags on the first clearly out-of-range hit, plus an *average reach* statistic (catches constant 3.2-3.5 block reach). Lag explains small excesses only.
+* **Hitbox**: accepts every camera angle swept since the previous movement packet (so fast flicks are legal, silent aim is not), hitbox expansion 0.15, and flags hits **through cobwebs and solid walls** (`checks.Hitbox.params.web` / `wall`).
+* `/vyxac preset strict|normal|relaxed` changes Reach/Hitbox/Backtrack strictness in one command.
+* Every alert has **[Punish] [Kick] [Teleport]** buttons (`alerts.buttons`).
+
+## 1.2.0: stronger AI and CheckHacks (client mod detection)
+### AI
+Ten behavioural features (click rhythm, aim precision, reaction constancy, population outlier, click entropy, mouse-step quantisation,
+hit accuracy, snap-to-target, average reach, change against the player's own history). The model LEARNS from staff decisions
+(Punish = cheater, Dismiss on an AI-flagged player = clean) and from hack clients confirmed by CheckHacks; it is saved in
+`ai-model.yml`. `/vyxac ai explain <player>` shows how the score was made. CPU budget `ai.max-micros-per-second` (default 8000).
+
+### CheckHacks (sign translation check, MC-265322)
+A virtual sign with translatable / keybind text is shown above or below the player, its editor is opened and closed in the same
+tick, and the translated text the client sends back shows which mods are installed. Players download nothing.
+* **Needs Paper (or a fork) and the ProtocolLib plugin.** `/checkhacks status` says what is missing.
+* Modes TRANSLATE, KEYBIND, METEOR; a random control line on every sign; a client that rewrites sign text or never answers is **PROTECTED**, never "clean".
+* DoubleCheck confirms every DETECTED / PROTECTED with a second scan. Bedrock / Geyser / Floodgate skipped.
+* Auto check on join, language check on join, per-player cooldown, separate hack lists (normal / join / anticheat),
+  hooks for Vulcan / Spartan / Matrix flags (Grim: add `checkhacks %player% -ac` to its punishment commands) and VyxAC's own flags.
+* Commands on DETECTED / PROTECTED / clean and per-mod `command-rules`; placeholders `%player%` `%hack%` `&hack&` `{hack}`.
+* Results to everyone with `checkhacks.alerts` (`/chalerts` toggles), always privately to whoever started the check.
+* SQLite storage (every scan), web editor (`/cheditor`, one-time token, off by default, binds 127.0.0.1), two Discord webhooks with Components V2,
+  updater for YOUR GitHub releases (`/checkhacksupdate`, installs through plugins/update on restart), 9 languages, MiniMessage colours, PlaceholderAPI.
+* Commands: `/checkhacks <player> [mods|category|all|-join|-ac]`, `list`, `status`, `history <player>`, `probe <player> <KEYBIND|TRANSLATE> <key>`, `reload`;
+  `/chalerts`, `/cheditor`, `/checkhacksupdate`, `/checklang <player>`.
+
+**Important:** the mod table in `checkhacks.yml` ships with three entries (Meteor, Wurst, Xaero's Minimap) whose keys are NOT verified yet,
+and empty templates for the others. Verify or add a key with `/checkhacks probe` on a test account that runs the mod
+(keys come from the mod's `assets/<modid>/lang/en_us.json` or its keybinding ids). Wrong keys can only miss a mod, never accuse a clean player.

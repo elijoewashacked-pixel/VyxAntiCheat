@@ -391,6 +391,17 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
             msg(s, "&aAI statistics of &f" + pd.name + " &areset.");
             return;
         }
+        if (a.length >= 3 && a[1].equalsIgnoreCase("explain")) {
+            PlayerData pd = target(s, a[2]);
+            if (pd == null) return;
+            for (String l : pl.ai().explain(pd)) s.sendMessage(Settings.color("&7" + l));
+            return;
+        }
+        if (a.length >= 3 && a[1].equalsIgnoreCase("model") && a[2].equalsIgnoreCase("reset")) {
+            pl.ai().resetModel();
+            msg(s, "&aAI model reset to its defaults (learning starts again).");
+            return;
+        }
         msg(s, "&fMini AI &7(" + (pl.settings().aiEnabled ? "&aon" : "&coff") + "&7): &8" + pl.ai().status());
         List<PlayerData> list = new ArrayList<>(pl.allData());
         list.sort(Comparator.comparingDouble((PlayerData p) -> p.aiConfidence).reversed());
@@ -470,7 +481,7 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
                     return filter(new ArrayList<>(FEATURES.keySet()), a[1]);
                 }
                 case "ai" -> {
-                    return filter(List.of("status", "reset"), a[1]);
+                    return filter(List.of("status", "reset", "explain", "model"), a[1]);
                 }
                 case "diagnostics", "diagnose" -> {
                     return filter(List.of("now", "last"), a[1]);
@@ -488,7 +499,8 @@ public final class VyxCommand implements CommandExecutor, TabCompleter {
         }
         if (a.length == 3) {
             if (sub.equals("check")) return filter(List.of("on", "off"), a[2]);
-            if (sub.equals("ai") && a[1].equalsIgnoreCase("reset")) return filter(players(), a[2]);
+            if (sub.equals("ai") && (a[1].equalsIgnoreCase("reset") || a[1].equalsIgnoreCase("explain"))) return filter(players(), a[2]);
+            if (sub.equals("ai") && a[1].equalsIgnoreCase("model")) return filter(List.of("reset"), a[2]);
             if (sub.equals("special") && a[1].equalsIgnoreCase("mode")) return filter(List.of("ALERT_ONLY", "REVIEW", "AUTO"), a[2]);
             if (sub.equals("special")) return filter(List.of("true", "false"), a[2]);
             if (sub.equals("configure")) {

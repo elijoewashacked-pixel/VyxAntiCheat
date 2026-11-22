@@ -141,6 +141,8 @@ public final class CheckRegistry {
         def("AutoEat", "packet", "Switches slot and eats with machine timing", false, 1.0, 2, 8, NO,
                 "min-delay-ms", 70, "buffer", 4);
 
+        def("HackClient", "packet", "A cheat client mod was found with the sign translation check (CheckHacks)", true, 10.0, 1, 10, NO);
+
         // ------------------------------------------------------------ mini AI
         def("AI", "ai", "Statistical anomaly model (only ever corroborates, never punishes alone)", false, 1.0, 1, 9999, NO);
     }
