@@ -251,12 +251,13 @@ public final class StaffManager {
         msg(p, "&aStaff mode &2ON&a. You are vanished and your inventory is saved. Use the red dye (slot 9) to leave.");
         return true;
     }
-
+      
     public boolean exit(Player p, boolean quiet) {
         UUID id = p.getUniqueId();
         Saved s = saved.remove(id);
-        if (s == null) return false;
-        restore(p, s);
+if (s == null) return false;
+frozen.remove(id);
+restore(p, s);
         fileOf(id).delete();
         if (!quiet) msg(p, "&cStaff mode &4OFF&c. Your inventory was restored.");
         return true;
