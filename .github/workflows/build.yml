@@ -2,21 +2,25 @@ name: Build
 on:
   push:
   workflow_dispatch:
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: 21
+          java-version: '21'
           cache: maven
+
       - name: Build
         run: |
           POM=$(find . -name pom.xml | head -1)
           echo "Using $POM"
           mvn -B -f "$POM" package
+
       - uses: actions/upload-artifact@v4
         with:
           name: VyxAC-jar
