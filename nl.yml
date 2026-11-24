@@ -1,68 +1,157 @@
-name: VyxAC
-version: ${project.version}
-main: com.vyxac.VyxAC
-api-version: "1.20"
-author: VyxAC
-description: Lightweight, false-positive-averse anticheat with a low-CPU anomaly model.
-softdepend: [ProtocolLib, PlaceholderAPI, Floodgate, Vulcan, Spartan, Matrix, GrimAC]
-commands:
-  checkhacks:
-    description: Detect hacked clients with the sign translation check
-    usage: /checkhacks <player> [mods|category|all]
-    aliases: [chk]
-  chalerts:
-    description: Toggle CheckHacks alerts
-    usage: /chalerts
-  cheditor:
-    description: One-time login link for the web editor
-    usage: /cheditor
-  checkhacksupdate:
-    description: Download the latest release
-    usage: /checkhacksupdate
-  checklang:
-    description: Show the client language of a player
-    usage: /checklang <player>
+# =====================================================================================================
+#  CheckHacks: client mod detection with the sign translation exploit (MC-265322)
+#
+#  A virtual sign is sent above or below the player (nothing is placed in the world) and its editor is
+#  opened and closed in the same tick, so it cannot be read. The client answers with the TRANSLATED text,
+#  which shows whether a mod that owns a translation key / keybind is installed.
+#
+#  Requirements: Paper (or a fork such as Purpur / Folia) and ProtocolLib.
+#  /checkhacks status tells you exactly what is missing.  /checkhacks probe verifies a key with a real client.
+#  Players do not need to download anything.
+# =====================================================================================================
+enabled: true
+language: en                  # messages/<language>.yml : en es de fr it pt ru nl tr
+
+settings:
+  timeout-ticks: 40           # no answer within this time = PROTECTED (the client probably blocks the packet)
+  between-sign-ticks: 1       # ticks between two signs of one check
+  doublecheck: true           # every DETECTED / PROTECTED result is confirmed by a second scan (cuts false positives)
+  cooldown-seconds: 60        # automatic checks: minimum time between two checks of the same player
+  max-concurrent: 3           # checks running at the same time
+  show-clean-lines: true      # also print NOT_DETECTED lines in the result
+  sign-position: auto         # above | below | auto : where the virtual sign appears (never in the line of sight)
+  bedrock-prefixes: [".", "*"]  # Bedrock / Geyser / Floodgate players are skipped
+
+auto-check:
+  on-join: false
+  join-delay-seconds: 10
+  first-join-only: false
+  language-on-join: true
+  language-first-join-only: true
+
+# which mods a check looks for: mod ids, categories (hack, utility, map, other) or "all"
+lists:
+  normal: [all]               # /checkhacks <player>
+  join: [hack]                # join checks
+  anticheat: [hack]           # checks started by an anticheat flag
+
+# a flag of an anticheat starts a check of that player right away
+detect-flag:
   vyxac:
-    description: VyxAC main command
-    usage: /vyxac help
-    aliases: [vac]
-permissions:
-  vyxac.admin:
-    description: Full access to /vyxac
-    default: op
-  vyxac.alerts:
-    description: Receive cheat alerts
-    default: op
-  vyxac.staff:
-    description: Staff mode, report tickets, freeze, inspect, staff chat
-    default: op
-  vyxac.report:
-    description: Send reports with /vac report
-    default: true
-  vyxac.bypass:
-    description: Not checked by VyxAC
-    default: false
-  checkhacks.use:
-    description: Start client mod checks
-    default: op
-  checkhacks.alerts:
-    description: Receive CheckHacks results
-    default: op
-  checkhacks.editor:
-    description: Use /cheditor
-    default: op
-  checkhacks.update:
-    description: Use /checkhacksupdate and see the update notice
-    default: op
-  checkhacks.admin:
-    description: probe, reload and everything else of CheckHacks
-    default: op
-  checkhacks.*:
-    description: All CheckHacks permissions
-    default: op
-    children:
-      checkhacks.use: true
-      checkhacks.alerts: true
-      checkhacks.editor: true
-      checkhacks.update: true
-      checkhacks.admin: true
+    enabled: true
+    min-vl: 6                 # VyxAC total violation level that triggers a check
+  anticheats:                 # works through the other plugin's Bukkit event (class names can be edited)
+    vulcan:  {enabled: true,  plugin: Vulcan,  event: "me.frep.vulcan.api.event.VulcanFlagEvent",        getter: getPlayer}
+    spartan: {enabled: true,  plugin: Spartan, event: "me.vagdedes.spartan.api.PlayerViolationEvent",    getter: getPlayer}
+    matrix:  {enabled: true,  plugin: Matrix,  event: "me.rerere.matrix.api.events.PlayerViolationEvent", getter: getPlayer}
+    # Grim has its own event bus: let Grim run  checkhacks %player% -ac  as one of its punishment commands instead.
+    grim:    {enabled: false, plugin: GrimAC,  event: "", getter: getPlayer}
+
+# commands run from the console. Placeholders: %player%  %hack%  &hack&  {hack}
+# (with two hacks found, &hack& becomes "Meteor Client, Wurst Client")
+commands:
+  on-detected: []             # e.g. "tempban %player% 7d Hack client: &hack&"
+  on-protected: []
+  on-clean: []
+  command-rules: []           # per mod:  - {mod: meteor, result: DETECTED, commands: ["kick %player% Hack: &hack&"]}
+                              # mod = any mod id or "any"; result = ANY | DETECTED | NOT_DETECTED | PROTECTED | SKIPPED
+
+discord:
+  use-components-v2: true     # true = Container with accent colour, text, separator, footer.  false = classic embed
+  accent-color: "#ff5555"
+  hack-webhook: ""            # webhook for hack checks
+  lang-webhook: ""            # webhook for language checks
+  only-flagged: true          # post hack checks only when something was DETECTED / PROTECTED
+  hack-template: "**&name&** was checked by &checker& (&reason&)\n&results&"
+  lang-template: "**&name&** uses the client language &lang&"
+
+web:
+  enabled: false              # built-in web editor: browse scans, look up players, start checks
+  bind: 127.0.0.1             # 0.0.0.0 = reachable from outside (put it behind a reverse proxy with HTTPS!)
+  port: 8123
+  public-url: ""              # shown in the login link, e.g. https://anticheat.example.com
+  token-minutes: 10           # /cheditor creates a ONE-TIME login token that expires after this long
+  session-minutes: 60
+
+updater:
+  enabled: false
+  repo: ""                    # "owner/repo" of YOUR GitHub releases; the jar is placed in plugins/update/ (installed on restart)
+
+# ---------------------------------------------------------------------------------------------------
+#  MODS.  A mod is detected when the client resolves one of its probes.
+#    mode KEYBIND   : the key is a keybinding id (key.<mod>.<name>)          -> comes back as the key's name
+#    mode TRANSLATE : the key is any translation key of the mod's lang file  -> comes back as the translation
+#    mode METEOR    : keybind (key) + category translation (key2); either one detects
+#  Add your own: unzip the mod, open assets/<modid>/lang/en_us.json, copy a key, then verify it with
+#  /checkhacks probe <player> TRANSLATE <key> while that player runs the mod. verified: false = not tested yet.
+# ---------------------------------------------------------------------------------------------------
+mods:
+  meteor:
+    name: "Meteor Client"
+    category: hack
+    verified: false
+    probes:
+      - {mode: METEOR, key: "key.meteor-client.open-gui", key2: "key.categories.meteor-client"}
+  wurst:
+    name: "Wurst Client"
+    category: hack
+    verified: false
+    probes:
+      - {mode: KEYBIND, key: "key.wurst.zoom"}
+  xaero_minimap:
+    name: "Xaero's Minimap"
+    category: map
+    verified: false
+    probes:
+      - {mode: KEYBIND, key: "gui.xaero_new_waypoint"}
+  # --- ready to fill in (enable them once a key is verified) ---
+  liquidbounce:
+    name: "LiquidBounce"
+    category: hack
+    enabled: false
+    probes: []
+  trouser_streak:
+    name: "Trouser Streak"
+    category: hack
+    enabled: false
+    probes: []
+  trouser_streak_nnc:
+    name: "Trouser Streak NewerNewChunks / AnHero"
+    category: hack
+    enabled: false
+    probes: []
+  uiutils:
+    name: "UI Utils"
+    category: hack
+    enabled: false
+    probes: []
+  seedcrackerx:
+    name: "SeedCrackerX"
+    category: hack
+    enabled: false
+    probes: []
+  simple_world_downloader:
+    name: "Simple World Downloader"
+    category: hack
+    enabled: false
+    probes: []
+  glazed:
+    name: "Glazed"
+    category: hack
+    enabled: false
+    probes: []
+  baritone:
+    name: "Baritone"
+    category: hack
+    enabled: false
+    probes: []
+  litematica:
+    name: "Litematica"
+    category: utility
+    enabled: false
+    probes: []
+  item_scroller:
+    name: "Item Scroller"
+    category: utility
+    enabled: false
+    probes: []

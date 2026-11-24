@@ -1,137 +1,89 @@
 package com.vyxac;
 
-/** Rolling per-player combat statistics used by the mini AI. Updates are O(1); the heavy maths runs in AiMonitor. */
-public final class AiStats {
-    /** number of model features */
-    public static final int F = 10;
+/** Plain-double geometry helpers (no allocations in hot paths). Minecraft yaw/pitch convention. */
+public final class Geo {
+    private Geo() {}
 
-    public final int[] iv = new int[32];
-    public int ivN, ivI;
-    public long lastHitMs;
-    public int aimN, reN, hits, hotWindows, swings, snapHits, snapSamples, reachN;
-    public double aimMean, aimM2, reMean, reM2, reachMean, lastScore;
-
-    /** |yaw| / |pitch| change per rotation while fighting (used for the sensitivity-quantisation test) */
-    public final double[] rot = new double[48], pit = new double[48];
-    public int rotN, rotI, pitN, pitI;
-
-    /** the player's own long-term norm (exponential moving average) */
-    public double emaAim = -1, emaMode = -1;
-    public int emaN;
-
-    /** features of the latest analysis window, kept so staff decisions can teach the model */
-    public double[] lastX;
-    public double lastRaw;
-    public long lastXAt;
-
-    public void addInterval(int ticks) {
-        iv[ivI] = ticks;
-        ivI = (ivI + 1) % iv.length;
-        if (ivN < iv.length) ivN++;
+    public static double dirX(float yaw, float pitch) {
+        return -Math.sin(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch));
     }
 
-    public void addAim(double deg) {
-        aimN++;
-        double d = deg - aimMean;
-        aimMean += d / aimN;
-        aimM2 += d * (deg - aimMean);
+    public static double dirY(float pitch) {
+        return -Math.sin(Math.toRadians(pitch));
     }
 
-    public void addReaction(double ms) {
-        reN++;
-        double d = ms - reMean;
-        reMean += d / reN;
-        reM2 += d * (ms - reMean);
+    public static double dirZ(float yaw, float pitch) {
+        return Math.cos(Math.toRadians(yaw)) * Math.cos(Math.toRadians(pitch));
     }
 
-    public void addReach(double dist) {
-        reachN++;
-        reachMean += (dist - reachMean) / reachN;
-    }
-
-    public void addRot(double yawDelta) {
-        rot[rotI] = yawDelta;
-        rotI = (rotI + 1) % rot.length;
-        if (rotN < rot.length) rotN++;
-    }
-
-    public void addPitch(double pitchDelta) {
-        pit[pitI] = pitchDelta;
-        pitI = (pitI + 1) % pit.length;
-        if (pitN < pit.length) pitN++;
-    }
-
-    public double aimStd() { return aimN > 1 ? Math.sqrt(aimM2 / (aimN - 1)) : 0; }
-    public double reStd() { return reN > 1 ? Math.sqrt(reM2 / (reN - 1)) : 0; }
-
-    /** Share of recent click intervals that equal the most common interval (in ticks). */
-    public double modeRatio() {
-        if (ivN < 12) return 0;
-        int[] counts = new int[64];
-        int best = 0;
-        for (int k = 0; k < ivN; k++) {
-            int v = Math.min(63, Math.max(0, iv[k]));
-            if (++counts[v] > best) best = counts[v];
-        }
-        return best / (double) ivN;
-    }
-
-    /** Shannon entropy (bits) of the click-interval distribution; machines are far more predictable than hands. -1 = not enough data */
-    public double entropy() {
-        if (ivN < 24) return -1;
-        int[] counts = new int[64];
-        for (int k = 0; k < ivN; k++) counts[Math.min(63, Math.max(0, iv[k]))]++;
-        double h = 0;
-        for (int c : counts) {
-            if (c == 0) continue;
-            double p = c / (double) ivN;
-            h -= p * Math.log(p) / Math.log(2);
-        }
-        return h;
-    }
-
-    private static double gcd(double a, double b) {
-        while (b > 0.0008) {
-            double t = a % b;
-            a = b;
-            b = t;
-        }
+    /** Wraps an angle difference into [-180, 180]. */
+    public static float wrap(float a) {
+        a %= 360f;
+        if (a >= 180f) a -= 360f;
+        if (a < -180f) a += 360f;
         return a;
     }
 
-    /**
-     * Mouse input is quantised: every rotation is a whole multiple of a sensitivity dependent step, so the GCD of consecutive
-     * rotations keeps returning the same step. Silent aim / killaura rotations are not multiples of anything.
-     * Returns the share of consecutive pairs that agree on one step (human ~0.5-0.9, machine ~0), or -1 when there is too little data.
-     */
-    public static double quantSupport(double[] a, int n) {
-        if (n < 24) return -1;
-        double[] g = new double[n];
-        int m = 0;
-        for (int i = 1; i < n; i++) {
-            double v = gcd(Math.max(a[i - 1], a[i]), Math.min(a[i - 1], a[i]));
-            if (v >= 0.008) g[m++] = v;
-        }
-        if (m < 6) return 0;
-        int best = 0;
-        for (int i = 0; i < m; i++) {
-            int c = 0;
-            for (int j = 0; j < m; j++) if (Math.abs(g[j] - g[i]) <= 0.03 * g[i] + 0.0004) c++;
-            if (c > best) best = c;
-        }
-        return best / (double) (n - 1);
+    /** Shortest distance from point (px,py,pz) to the axis aligned box. 0 when inside. */
+    public static double pointBoxDist(double px, double py, double pz,
+                                      double x0, double y0, double z0, double x1, double y1, double z1) {
+        double dx = Math.max(Math.max(x0 - px, 0), px - x1);
+        double dy = Math.max(Math.max(y0 - py, 0), py - y1);
+        double dz = Math.max(Math.max(z0 - pz, 0), pz - z1);
+        return Math.sqrt(dx * dx + dy * dy + dz * dz);
     }
 
-    public void resetWindow() {
-        aimN = 0;
-        aimMean = aimM2 = 0;
-        reN = 0;
-        reMean = reM2 = 0;
-        hits = 0;
-        swings = 0;
-        snapHits = 0;
-        snapSamples = 0;
-        reachN = 0;
-        reachMean = 0;
+    /** Slab test. True when the ray (origin o, direction d, length 0..maxT) hits the box. */
+    public static boolean rayHitsBox(double ox, double oy, double oz, double dx, double dy, double dz, double maxT,
+                                     double x0, double y0, double z0, double x1, double y1, double z1) {
+        double tmin = 0, tmax = maxT;
+        double[] o = {ox, oy, oz}, d = {dx, dy, dz}, lo = {x0, y0, z0}, hi = {x1, y1, z1};
+        for (int i = 0; i < 3; i++) {
+            if (Math.abs(d[i]) < 1e-9) {
+                if (o[i] < lo[i] || o[i] > hi[i]) return false;
+            } else {
+                double t1 = (lo[i] - o[i]) / d[i], t2 = (hi[i] - o[i]) / d[i];
+                if (t1 > t2) {
+                    double t = t1;
+                    t1 = t2;
+                    t2 = t;
+                }
+                tmin = Math.max(tmin, t1);
+                tmax = Math.min(tmax, t2);
+                if (tmin > tmax) return false;
+            }
+        }
+        return true;
+    }
+
+    /** Slab test returning the distance at which the ray enters the box, or -1 when it misses. */
+    public static double rayBoxT(double ox, double oy, double oz, double dx, double dy, double dz, double maxT,
+                                 double x0, double y0, double z0, double x1, double y1, double z1) {
+        double tmin = 0, tmax = maxT;
+        double[] o = {ox, oy, oz}, d = {dx, dy, dz}, lo = {x0, y0, z0}, hi = {x1, y1, z1};
+        for (int i = 0; i < 3; i++) {
+            if (Math.abs(d[i]) < 1e-9) {
+                if (o[i] < lo[i] || o[i] > hi[i]) return -1;
+            } else {
+                double t1 = (lo[i] - o[i]) / d[i], t2 = (hi[i] - o[i]) / d[i];
+                if (t1 > t2) {
+                    double t = t1;
+                    t1 = t2;
+                    t2 = t;
+                }
+                tmin = Math.max(tmin, t1);
+                tmax = Math.min(tmax, t2);
+                if (tmin > tmax) return -1;
+            }
+        }
+        return tmin;
+    }
+
+    /** Angle in degrees between direction (dx,dy,dz) and the vector (vx,vy,vz). */
+    public static double angleDeg(double dx, double dy, double dz, double vx, double vy, double vz) {
+        double dl = Math.sqrt(dx * dx + dy * dy + dz * dz), vl = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (dl < 1e-9 || vl < 1e-9) return 0;
+        double c = (dx * vx + dy * vy + dz * vz) / (dl * vl);
+        return Math.toDegrees(Math.acos(Math.max(-1, Math.min(1, c))));
     }
 }

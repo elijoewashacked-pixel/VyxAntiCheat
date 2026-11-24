@@ -1,25 +1,39 @@
-package com.vyxac;
-
-/** Immutable snapshot of one movement event. */
-public final class MoveCtx {
-    public static final int WATER = 1, LAVA = 2, CLIMB = 4, WEB = 8, ICE = 16, BOUNCE = 32, HONEY = 64, SOUL = 128, BUBBLE = 256;
-    /** environments in which normal gravity / ground rules do not apply */
-    public static final int SPECIAL = WATER | LAVA | CLIMB | WEB | BOUNCE | HONEY | BUBBLE;
-
-    public final long time;
-    public final double x, y, z;
-    public final float yaw, pitch;
-    public final int env;
-    public final boolean supported;
-
-    public MoveCtx(long time, double x, double y, double z, float yaw, float pitch, int env, boolean supported) {
-        this.time = time;
-        this.x = x;
-        this.y = y;
-        this.z = z;
-        this.yaw = yaw;
-        this.pitch = pitch;
-        this.env = env;
-        this.supported = supported;
-    }
-}
+# CheckHacks messages (pt). MiniMessage colours, & codes and PlaceholderAPI work. Result words (DETECTED ...) are status codes.
+prefix: "<gray>[<aqua>CheckHacks</aqua>]</gray> "
+no-permission: "<red>Voce nao tem permissao."
+player-not-found: "<red>O jogador <white>%player%</white> nao esta online."
+usage: "<gray>Uso: <white>/checkhacks <jogador> [mods|categoria|all]</white>"
+unavailable: "<red>O CheckHacks nao esta disponivel: <white>%reason%</white>"
+disabled: "<red>O CheckHacks esta desativado em checkhacks.yml."
+check-started: "<gray>Verificando <white>%player%</white> (<white>%count%</white> mods)..."
+cooldown: "<red>%player% foi verificado ha pouco. Aguarde <white>%seconds%s</white>."
+busy: "<red>%player% ja esta sendo verificado."
+bedrock-skipped: "<gray>%player% e um jogador Bedrock: ignorado."
+result-header: "<gray>Resultado de <white>%player%</white> <dark_gray>|</dark_gray> <gray>%reason% <dark_gray>(iniciado por %checker%)</dark_gray>"
+result-line: "<gray> - <white>%mod%</white><dark_gray>:</dark_gray> %result%"
+result-detected: "<red><bold>DETECTED</bold></red>"
+result-not-detected: "<green>NOT_DETECTED</green>"
+result-protected: "<yellow>PROTECTED</yellow>"
+result-skipped: "<gray>SKIPPED</gray>"
+result-clean: "<green>%player% parece limpo.</green>"
+reason-manual: "verificacao manual"
+reason-join: "verificacao ao entrar"
+reason-anticheat: "alerta do anticheat"
+reason-web: "editor web"
+reason-vyxac: "alerta do VyxAC"
+alerts-on: "<green>Alertas do CheckHacks ativados.</green>"
+alerts-off: "<red>Alertas do CheckHacks desativados.</red>"
+editor-disabled: "<red>O editor web esta desativado (web.enabled em checkhacks.yml).</red>"
+editor-link: "<gray>Login do editor web (uso unico, expira em %minutes% min):</gray> <aqua>%url%</aqua>"
+update-available: "<aqua>O VyxAC %version% esta disponivel!</aqua> <white>Clique aqui para baixar.</white>"
+update-downloading: "<gray>Baixando %version%...</gray>"
+update-complete: "<green>Download concluido! Reinicie o servidor.</green>"
+update-restart-required: "<yellow>Reinicie o servidor para concluir a atualizacao.</yellow>"
+update-failed: "<red>A atualizacao falhou: %reason%</red>"
+update-no-update: "<green>Voce esta na versao mais recente.</green>"
+update-disabled: "<red>O atualizador esta desativado (updater.enabled / updater.repo em checkhacks.yml).</red>"
+lang-line: "<gray>%player% usa o idioma do cliente <white>%language%</white> <dark_gray>(%code%)</dark_gray>"
+list-header: "<gray>Mods que a verificacao pode detectar:</gray>"
+no-history: "<gray>Nenhuma verificacao encontrada.</gray>"
+probe-result: "<gray>A sonda <white>%key%</white> respondeu: <white>%answer%</white> <dark_gray>(%verdict%)</dark_gray>"
+reloaded: "<green>Configuracao do CheckHacks recarregada.</green>"

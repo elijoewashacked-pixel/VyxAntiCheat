@@ -1,195 +1,445 @@
 package com.vyxac;
 
-import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
 
-import java.util.Collection;
-import java.util.LinkedHashMap;
+import java.io.File;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * All checks and their default settings. Every value can be changed in config.yml under
- * checks.&lt;Name&gt;.* or with /vyxac configure and /vyxac customize.
+ * Staff mode: vanish, flight, invulnerability and a hotbar kit. The real inventory is saved in memory AND on disk
+ * (plugins/VyxAC/staffmode/&lt;uuid&gt;.yml) so a crash can never lose items; it is restored on exit, on quit,
+ * on plugin disable and automatically on the next join if the server crashed.
  */
-public final class CheckRegistry {
-    private final Map<String, CheckInfo> map = new LinkedHashMap<>();
+public final class StaffManager {
+    public enum AwaitType { REPLY, DISMISS_NOTE, ACTION_NOTE, STAFF_NOTE }
 
-    public CheckRegistry() {
-        defineAll();
-    }
+    /** a staff member is expected to type something in chat */
+    public static final class Await {
+        public final AwaitType type;
+        public final int reportId;
+        public final UUID target;
+        public final String targetName;
+        final long at = System.currentTimeMillis();
 
-    private void def(String name, String cat, String desc, boolean punishable,
-                     double vlPerFlag, double alertVl, double punishVl, double mitigateVl, Object... kv) {
-        CheckInfo c = new CheckInfo(name, cat, desc);
-        c.punishable = punishable;
-        c.vlPerFlag = vlPerFlag;
-        c.alertVl = alertVl;
-        c.punishVl = punishVl;
-        c.mitigateVl = mitigateVl;
-        c.defPunishable = punishable;
-        c.defVlPerFlag = vlPerFlag;
-        c.defAlertVl = alertVl;
-        c.defPunishVl = punishVl;
-        c.defMitigateVl = mitigateVl;
-        for (int i = 0; i + 1 < kv.length; i += 2) {
-            c.defaults.put((String) kv[i], ((Number) kv[i + 1]).doubleValue());
+        public Await(AwaitType type, int reportId, UUID target, String targetName) {
+            this.type = type;
+            this.reportId = reportId;
+            this.target = target;
+            this.targetName = targetName;
         }
-        map.put(name, c);
     }
 
-    private void defineAll() {
-        final double NO = 9999; // "never mitigate"
-
-        // ------------------------------------------------------------ combat
-        def("KillAura", "combat", "Hits that no human could land (angle, instant target switching)", true, 1.0, 1, 8, 3,
-                "max-angle", 95, "switch-angle", 60, "switch-ms", 250, "min-distance", 1.0, "buffer", 4);
-        def("AimAssist", "combat", "Unnaturally precise aim lock on moving targets", true, 1.0, 2, 10, NO,
-                "lock-error", 1.2, "window", 12, "min-lock", 10, "min-distance", 1.5);
-        def("AutoClicker", "combat", "Inhuman click speed or click rhythm", true, 1.0, 2, 10, 5,
-                "max-cps", 20, "mode-ratio", 0.9, "min-cps", 7);
-        def("TriggerBot", "combat", "Attacks with a machine-constant delay after the crosshair moves", true, 1.0, 2, 10, NO,
-                "max-reaction-ms", 70, "max-std-ms", 12, "samples", 10);
-        def("Reach", "combat", "Hits from further away than the game allows", true, 1.0, 1, 6, 2,
-                "tolerance", 0.3, "buffer", 1, "avg-limit", 3.0, "avg-hits", 8, "blatant", 0.9);
-        def("Hitbox", "combat", "Hits while the crosshair is not on the target, or through cobwebs / walls", true, 1.0, 1, 8, 3,
-                "expand", 0.15, "buffer", 2, "flick-ms", 0, "min-angle", 10, "web", 1, "wall", 1, "through-buffer", 1);
-        def("Criticals", "combat", "Critical hits without really falling", true, 1.0, 2, 8, 4,
-                "max-fall", 0.5, "buffer", 4);
-        def("Velocity", "combat", "Takes much less knockback than expected", true, 1.0, 2, 8, NO,
-                "min-ratio", 0.3, "buffer", 3, "min-kb", 0.25);
-        def("AntiKnockback", "combat", "Takes no knockback at all", true, 1.0, 2, 8, NO,
-                "min-ratio", 0.1, "buffer", 3);
-        def("FastBow", "combat", "Fires a bow faster than the charge time allows", true, 1.0, 1, 5, 1,
-                "tolerance-ms", 150, "force-slack", 0.06);
-        def("AutoPot", "combat", "Throws potions within a tick of switching slots", true, 1.0, 2, 8, NO,
-                "min-delay-ms", 70, "buffer", 3);
-        def("AutoTotem", "combat", "Re-equips a totem faster than a human can react", true, 1.0, 2, 8, NO,
-                "max-reaction-ms", 90, "buffer", 3);
-        def("MultiAura", "combat", "Attacks several targets in the same tick", true, 1.0, 1, 6, 2,
-                "same-tick-ms", 35);
-        def("AutoCrystal", "combat", "Places and detonates end crystals with machine timing", true, 1.0, 2, 8, NO,
-                "max-reaction-ms", 60, "buffer", 4);
-        def("Backtrack", "combat", "Hits targets at positions older than lag compensation allows", true, 0.7, 1, 8, 3,
-                "extra-ms", 120, "buffer", 2);
-
-        // ---------------------------------------------------------- movement
-        def("Speed", "movement", "Moves faster than vanilla physics allow", true, 1.0, 1, 8, 3,
-                "tolerance", 1.0, "leniency", 1.12, "ice-multiplier", 2.2);
-        def("Fly", "movement", "Hovers or rises without support", true, 1.0, 1, 8, 3,
-                "tolerance", 0.55, "hover-limit", 8, "rise-buffer", 3);
-        def("LongJump", "movement", "Jumps further than the airtime allows", true, 1.0, 1, 6, 2,
-                "leniency", 1.35, "slack", 1.2, "buffer", 2);
-        def("BunnyHop", "movement", "Chains hops faster than vanilla momentum allows", true, 1.0, 1, 6, 3,
-                "leniency", 1.28, "runs", 4);
-        def("NoFall", "movement", "Lands from a height without taking fall damage", true, 1.0, 1, 5, 2,
-                "min-drop", 4.0, "wait-ticks", 4);
-        def("Jesus", "movement", "Walks on liquids", true, 1.0, 1, 6, 3,
-                "buffer", 8);
-        def("Spider", "movement", "Climbs walls without a ladder", true, 1.0, 1, 6, 3,
-                "tolerance", 0.55);
-        def("Step", "movement", "Steps up blocks higher than allowed", true, 1.0, 1, 6, 2,
-                "tolerance", 0.12);
-        def("NoSlow", "movement", "Moves at normal speed while using an item", true, 1.0, 1, 6, 3,
-                "max-speed", 0.12, "buffer", 6, "min-use-ms", 400);
-        def("Timer", "movement", "Runs the game clock faster than normal", true, 1.0, 1, 6, 4,
-                "tolerance-ms", 450, "bank-ms", 4000);
-        def("Blink", "movement", "Holds movement back and releases it in a burst (alert only: lagging clients look similar)", false, 1.0, 1, 6, NO,
-                "min-gap-ms", 600, "burst", 8, "stable-ping-delta", 80, "buffer", 3);
-        def("Phase", "movement", "Moves through solid blocks", true, 1.0, 1, 5, 1,
-                "buffer", 2);
-        def("FastLadder", "movement", "Climbs ladders and vines too fast", true, 1.0, 1, 6, 3,
-                "max-up", 0.27, "buffer", 4);
-        def("ElytraFly", "movement", "Impossible elytra speed or hovering", true, 1.0, 1, 6, 3,
-                "max-speed", 3.2, "hover-limit", 8);
-
-        // ------------------------------------------------- player / inventory
-        def("AutoArmor", "player", "Equips armor in consecutive ticks", true, 1.0, 2, 8, NO,
-                "max-interval-ms", 55, "buffer", 3);
-        def("ChestStealer", "player", "Empties containers faster than a human can click", true, 1.0, 2, 8, NO,
-                "max-interval-ms", 55, "buffer", 8);
-        def("InventoryMove", "player", "Keeps moving while a container is open", true, 1.0, 1, 6, 3,
-                "min-open-ms", 600, "min-speed", 0.15, "buffer", 6);
-        def("Freecam", "player", "Interacts with a block face the player cannot see (off by default)", false, 1.0, 1, 6, NO,
-                "tolerance", 0.7, "buffer", 3, "flick-ms", 400);
-        map.get("Freecam").defaultEnabled = false;
-        def("XRay", "player", "Mines hidden ores far more often than chance allows (needs staff review)", false, 1.0, 1, 5, NO,
-                "min-hidden", 5, "min-ratio", 0.08, "window-sec", 600);
-        def("Scaffold", "player", "Places blocks without looking at them", true, 1.0, 1, 6, 2,
-                "expand", 0.4, "buffer", 4, "flick-ms", 300);
-        def("FastPlace", "player", "Places blocks faster than allowed", true, 1.0, 1, 6, 2,
-                "max-per-sec", 14);
-        def("Nuker", "player", "Breaks many blocks at once", true, 1.0, 1, 6, 2,
-                "max-per-sec", 28, "same-tick", 6, "window-ms", 20);
-        def("FastBreak", "player", "Breaks blocks faster than tool speed allows", true, 1.0, 1, 6, 2,
-                "tolerance", 0.6);
-        def("Baritone", "player", "Bot-like movement: sprinting sideways relative to the camera", false, 1.0, 1, 6, NO,
-                "min-offset-deg", 75, "buffer", 12);
-        def("AutoFish", "player", "Reels in a fish with machine timing", false, 1.0, 1, 6, NO,
-                "max-reaction-ms", 110, "buffer", 4);
-
-        // --------------------------------------------------- packet / misc
-        def("PingSpoof", "packet", "Reported latency swings that real networks do not produce (approximate)", false, 1.0, 1, 6, NO,
-                "delta", 300, "buffer", 6);
-        def("BadPackets", "packet", "Invalid movement or rotation values", true, 1.0, 1, 4, 1);
-        def("PacketFlood", "packet", "Sends far more packets than a client does", true, 1.0, 1, 5, NO,
-                "max-moves", 60, "max-clicks", 60, "kick-at", 0);
-        def("GroundSpoof", "packet", "Claims to be on the ground while in the air", true, 1.0, 1, 6, 3,
-                "buffer", 5);
-        def("RotationSpoof", "packet", "Impossible or machine-constant rotations", true, 1.0, 1, 6, 2,
-                "const-steps", 8);
-        def("FastEat", "packet", "Finishes eating or drinking too quickly", true, 1.0, 1, 5, 1,
-                "tolerance", 0.7);
-        def("AutoEat", "packet", "Switches slot and eats with machine timing", false, 1.0, 2, 8, NO,
-                "min-delay-ms", 70, "buffer", 4);
-
-        def("HackClient", "packet", "A cheat client mod was found with the sign translation check (CheckHacks)", true, 10.0, 1, 10, NO);
-
-        // ------------------------------------------------------------ mini AI
-        def("AI", "ai", "Statistical anomaly model (only ever corroborates, never punishes alone)", false, 1.0, 1, 9999, NO);
+    private static final class Saved {
+        ItemStack[] storage = new ItemStack[36], armor = new ItemStack[4];
+        ItemStack offhand;
+        GameMode gm = GameMode.SURVIVAL;
+        boolean allowFlight, flying, invulnerable, collidable = true, sleepIgnored;
     }
 
-    public CheckInfo get(String name) {
-        CheckInfo c = map.get(name);
-        if (c == null) throw new IllegalStateException("Unknown check: " + name);
-        return c;
+    private final VyxAC pl;
+    private final NamespacedKey toolKey;
+    private final File dir, notesFile;
+    private final Map<UUID, Saved> saved = new HashMap<>();
+    private final Set<UUID> vanished = new HashSet<>();
+    private final Set<UUID> frozen = new HashSet<>();
+    private final Set<UUID> chatMode = new HashSet<>();
+    private final Map<UUID, Await> awaiting = new HashMap<>();
+    private YamlConfiguration notes;
+
+    public StaffManager(VyxAC pl) {
+        this.pl = pl;
+        this.toolKey = new NamespacedKey(pl, "vyxac_tool");
+        this.dir = new File(pl.getDataFolder(), "staffmode");
+        this.notesFile = new File(pl.getDataFolder(), "notes.yml");
+        this.notes = YamlConfiguration.loadConfiguration(notesFile);
     }
 
-    public CheckInfo find(String name) {
-        for (CheckInfo c : map.values()) if (c.name.equalsIgnoreCase(name)) return c;
-        return null;
+    private void msg(Player p, String text) {
+        p.sendMessage(Settings.color(pl.settings().prefix + text));
     }
 
-    public Collection<CheckInfo> all() {
-        return map.values();
+    // ------------------------------------------------------------------ state queries
+
+    public boolean isStaffMode(UUID id) { return saved.containsKey(id); }
+    public boolean isVanished(UUID id) { return vanished.contains(id); }
+    public boolean isFrozen(UUID id) { return frozen.contains(id); }
+    public boolean inChatMode(UUID id) { return chatMode.contains(id); }
+
+    public List<String> staffModeNames() {
+        List<String> l = new ArrayList<>();
+        for (UUID id : saved.keySet()) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null) l.add(p.getName());
+        }
+        return l;
     }
 
-    /** Adds every check's defaults so a fresh config.yml gets complete sections. */
-    public void registerDefaults(FileConfiguration c) {
-        for (CheckInfo ci : map.values()) {
-            String b = "checks." + ci.name + ".";
-            c.addDefault(b + "enabled", ci.defaultEnabled);
-            c.addDefault(b + "punishable", ci.punishable);
-            c.addDefault(b + "vl-per-flag", ci.vlPerFlag);
-            c.addDefault(b + "alert-vl", ci.alertVl);
-            c.addDefault(b + "punish-vl", ci.punishVl);
-            c.addDefault(b + "mitigate-vl", ci.mitigateVl);
-            for (Map.Entry<String, Double> e : ci.defaults.entrySet()) {
-                c.addDefault(b + "params." + e.getKey(), e.getValue());
+    public List<String> frozenNames() {
+        List<String> l = new ArrayList<>();
+        for (UUID id : frozen) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null) l.add(p.getName());
+        }
+        return l;
+    }
+
+    // ------------------------------------------------------------------ kit
+
+    private ItemStack tool(Material m, String id, String name, String... lore) {
+        ItemStack it = new ItemStack(m);
+        ItemMeta meta = it.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(Settings.color(name));
+            List<String> l = new ArrayList<>();
+            for (String s : lore) l.add(Settings.color(s));
+            meta.setLore(l);
+            meta.getPersistentDataContainer().set(toolKey, PersistentDataType.STRING, id);
+            it.setItemMeta(meta);
+        }
+        return it;
+    }
+
+    public String toolOf(ItemStack it) {
+        if (it == null || !it.hasItemMeta()) return null;
+        ItemMeta meta = it.getItemMeta();
+        return meta == null ? null : meta.getPersistentDataContainer().get(toolKey, PersistentDataType.STRING);
+    }
+
+    private static Material mat(String name, Material fallback) {
+        Material m = Material.matchMaterial(name);
+        return m == null ? fallback : m;
+    }
+
+    private ItemStack reportsItem() {
+        int n = pl.reports().openCount();
+        ItemStack it = tool(Material.PAPER, "reports", "&b&lReports &7(" + n + " open)", "&7Right-click: open the report tickets");
+        it.setAmount(Math.max(1, Math.min(64, n)));
+        return it;
+    }
+
+    private ItemStack vanishItem(boolean on) {
+        return tool(mat(on ? "LIME_DYE" : "GRAY_DYE", Material.PAPER), "vanish", on ? "&a&lVanish: ON" : "&7&lVanish: OFF", "&7Right-click: toggle vanish");
+    }
+
+    private void giveKit(Player p) {
+        PlayerInventory inv = p.getInventory();
+        inv.clear();
+        inv.setArmorContents(new ItemStack[4]);
+        inv.setItemInOffHand(null);
+        inv.setItem(0, reportsItem());
+        inv.setItem(1, tool(Material.COMPASS, "players", "&b&lPlayers", "&7Right-click: list online players", "&7(click one to inspect)"));
+        inv.setItem(2, tool(mat("SPYGLASS", Material.STICK), "inspect", "&b&lInspect", "&7Right-click a player:", "&7violations, AI, ping, notes"));
+        inv.setItem(3, tool(mat("PACKED_ICE", Material.ICE), "freeze", "&b&lFreeze", "&7Right-click a player:", "&7freeze / unfreeze"));
+        inv.setItem(4, tool(Material.CHEST, "invsee", "&b&lInventory viewer", "&7Right-click a player:", "&7look inside (read-only)"));
+        inv.setItem(5, tool(Material.ENDER_PEARL, "rtp", "&b&lRandom teleport", "&7Right-click: jump to a random player"));
+        inv.setItem(6, tool(mat("WRITABLE_BOOK", Material.BOOK), "chat", "&b&lStaff chat", "&7Right-click: toggle staff chat"));
+        inv.setItem(7, vanishItem(vanished.contains(p.getUniqueId())));
+        inv.setItem(8, tool(mat("RED_DYE", Material.REDSTONE), "leave", "&c&lLeave staff mode", "&7Right-click: restore your inventory"));
+        inv.setHeldItemSlot(0);
+    }
+
+    /** updates the report counter on every staff member's paper */
+    public void refreshKits() {
+        for (UUID id : saved.keySet()) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null) p.getInventory().setItem(0, reportsItem());
+        }
+    }
+
+    // ------------------------------------------------------------------ enter / exit
+
+    private File fileOf(UUID id) {
+        return new File(dir, id + ".yml");
+    }
+
+    private void persist(UUID id, Saved s) {
+        YamlConfiguration y = new YamlConfiguration();
+        y.set("storage", Arrays.asList(s.storage));
+        y.set("armor", Arrays.asList(s.armor));
+        y.set("offhand", s.offhand);
+        y.set("gamemode", s.gm.name());
+        y.set("allow-flight", s.allowFlight);
+        y.set("flying", s.flying);
+        y.set("invulnerable", s.invulnerable);
+        y.set("collidable", s.collidable);
+        y.set("sleep-ignored", s.sleepIgnored);
+        try {
+            dir.mkdirs();
+            y.save(fileOf(id));
+        } catch (IOException ex) {
+            pl.getLogger().warning("Could not save staff-mode backup: " + ex.getMessage());
+        }
+    }
+
+    private static ItemStack[] toArray(List<?> list, int size) {
+        ItemStack[] arr = new ItemStack[size];
+        if (list != null) {
+            for (int i = 0; i < list.size() && i < size; i++) {
+                Object o = list.get(i);
+                arr[i] = o instanceof ItemStack ? (ItemStack) o : null;
+            }
+        }
+        return arr;
+    }
+
+    private Saved readFile(UUID id) {
+        File f = fileOf(id);
+        if (!f.exists()) return null;
+        YamlConfiguration y = YamlConfiguration.loadConfiguration(f);
+        Saved s = new Saved();
+        s.storage = toArray(y.getList("storage"), 36);
+        s.armor = toArray(y.getList("armor"), 4);
+        s.offhand = y.getItemStack("offhand");
+        try {
+            s.gm = GameMode.valueOf(y.getString("gamemode", "SURVIVAL"));
+        } catch (IllegalArgumentException ex) {
+            s.gm = GameMode.SURVIVAL;
+        }
+        s.allowFlight = y.getBoolean("allow-flight");
+        s.flying = y.getBoolean("flying");
+        s.invulnerable = y.getBoolean("invulnerable");
+        s.collidable = y.getBoolean("collidable", true);
+        s.sleepIgnored = y.getBoolean("sleep-ignored");
+        return s;
+    }
+
+    public boolean enter(Player p) {
+        UUID id = p.getUniqueId();
+        if (saved.containsKey(id)) return false;
+        PlayerInventory inv = p.getInventory();
+        Saved s = new Saved();
+        s.storage = inv.getStorageContents();
+        s.armor = inv.getArmorContents();
+        s.offhand = inv.getItemInOffHand();
+        s.gm = p.getGameMode();
+        s.allowFlight = p.getAllowFlight();
+        s.flying = p.isFlying();
+        s.invulnerable = p.isInvulnerable();
+        s.collidable = p.isCollidable();
+        s.sleepIgnored = p.isSleepingIgnored();
+        saved.put(id, s);
+        persist(id, s); // disk backup BEFORE anything is removed
+
+        PlayerData pd = pl.data(p);
+        pd.staffMode = true;
+        pd.resetMotion();
+        giveKit(p);
+        p.setAllowFlight(true);
+        p.setInvulnerable(true);
+        p.setCollidable(false);
+        p.setSleepingIgnored(true);
+        setVanish(p, true);
+        pl.vio().setAlerts(id, true);
+        msg(p, "&aStaff mode &2ON&a. You are vanished and your inventory is saved. Use the red dye (slot 9) to leave.");
+        return true;
+    }
+      
+    public boolean exit(Player p, boolean quiet) {
+        UUID id = p.getUniqueId();
+        Saved s = saved.remove(id);
+        frozen.remove(id);
+        if (s == null) return false;
+        restore(p, s);
+        fileOf(id).delete();
+        if (!quiet) msg(p, "&cStaff mode &4OFF&c. Your inventory was restored.");
+        return true;
+    }
+
+    private void restore(Player p, Saved s) {
+        UUID id = p.getUniqueId();
+        PlayerInventory inv = p.getInventory();
+        inv.clear();
+        inv.setStorageContents(s.storage);
+        inv.setArmorContents(s.armor);
+        inv.setItemInOffHand(s.offhand);
+        p.updateInventory();
+        setVanish(p, false);
+        chatMode.remove(id);
+        awaiting.remove(id);
+        p.setCollidable(s.collidable);
+        p.setSleepingIgnored(s.sleepIgnored);
+        p.setAllowFlight(s.allowFlight);
+        if (!s.allowFlight || !s.flying) p.setFlying(false);
+        if (p.getGameMode() != s.gm) p.setGameMode(s.gm);
+        // Restore the player's original damage state immediately when staff mode ends.
+        p.setInvulnerable(s.invulnerable);
+        PlayerData pd = pl.dataOrNull(id);
+        if (pd != null) {
+            pd.staffMode = false;
+            pd.resetMotion();
+            pd.lastFlight = System.currentTimeMillis();
+        }
+    }
+
+    /** crash recovery: the server stopped while this player was in staff mode */
+    public void recoverIfNeeded(Player p) {
+        UUID id = p.getUniqueId();
+        if (saved.containsKey(id)) return;
+        Saved s = readFile(id);
+        if (s == null) return;
+        restore(p, s);
+        fileOf(id).delete();
+        msg(p, "&eThe server stopped while you were in staff mode: your inventory was restored.");
+    }
+
+    public void toggle(Player p) {
+        if (isStaffMode(p.getUniqueId())) exit(p, false);
+        else enter(p);
+    }
+
+    public void exitAll() {
+        for (UUID id : new ArrayList<>(saved.keySet())) {
+            Player p = Bukkit.getPlayer(id);
+            if (p != null) exit(p, true);
+        }
+    }
+
+    // ------------------------------------------------------------------ vanish
+
+    public void setVanish(Player p, boolean on) {
+        UUID id = p.getUniqueId();
+        if (on) vanished.add(id);
+        else vanished.remove(id);
+        for (Player o : Bukkit.getOnlinePlayers()) {
+            if (o.equals(p)) continue;
+            if (on && !o.hasPermission("vyxac.staff") && !o.hasPermission("vyxac.admin")) o.hidePlayer(pl, p);
+            else o.showPlayer(pl, p);
+        }
+        if (saved.containsKey(id)) p.getInventory().setItem(7, vanishItem(on));
+    }
+
+    public void toggleVanish(Player p) {
+        boolean now = !vanished.contains(p.getUniqueId());
+        setVanish(p, now);
+        msg(p, "Vanish " + (now ? "&aON" : "&cOFF") + "&7.");
+    }
+
+    /** a player joined: hide every vanished staff member from them */
+    public void hideVanishedFrom(Player viewer) {
+        if (viewer.hasPermission("vyxac.staff") || viewer.hasPermission("vyxac.admin")) return;
+        for (UUID id : vanished) {
+            Player v = Bukkit.getPlayer(id);
+            if (v != null) viewer.hidePlayer(pl, v);
+        }
+    }
+
+    // ------------------------------------------------------------------ freeze
+
+    public void toggleFreeze(Player target, Player staff) {
+        if (frozen.remove(target.getUniqueId())) {
+            msg(staff, "&aUnfroze &f" + target.getName() + "&a.");
+            msg(target, "&aYou were unfrozen.");
+        } else {
+            frozen.add(target.getUniqueId());
+            msg(staff, "&bFroze &f" + target.getName() + "&b. They cannot move until you unfreeze them.");
+            target.sendMessage(Settings.color("&c&lYou have been frozen by staff. &7Do not log out and follow their instructions."));
+            try {
+                target.sendTitle(Settings.color("&c&lFROZEN"), Settings.color("&7Follow staff instructions"), 5, 100, 10);
+            } catch (Throwable ignored) {
+                // titles are optional
             }
         }
     }
 
-    public void load(FileConfiguration c) {
-        for (CheckInfo ci : map.values()) {
-            String b = "checks." + ci.name + ".";
-            ci.enabled = c.getBoolean(b + "enabled", ci.defaultEnabled);
-            ci.punishable = c.getBoolean(b + "punishable", ci.punishable);
-            ci.vlPerFlag = c.getDouble(b + "vl-per-flag", ci.vlPerFlag);
-            ci.alertVl = c.getDouble(b + "alert-vl", ci.alertVl);
-            ci.punishVl = c.getDouble(b + "punish-vl", ci.punishVl);
-            ci.mitigateVl = c.getDouble(b + "mitigate-vl", ci.mitigateVl);
-            for (Map.Entry<String, Double> e : ci.defaults.entrySet()) {
-                ci.params.put(e.getKey(), c.getDouble(b + "params." + e.getKey(), e.getValue()));
-            }
+    public void unfreezeSilently(UUID id) {
+        frozen.remove(id);
+    }
+
+    // ------------------------------------------------------------------ staff chat
+
+    public void toggleChat(Player p) {
+        boolean now = chatMode.add(p.getUniqueId());
+        if (!now) chatMode.remove(p.getUniqueId());
+        msg(p, "Staff chat " + (now ? "&aON &7(everything you type goes to staff only)" : "&cOFF") + "&7.");
+    }
+
+    public void staffChat(String from, String message) {
+        String line = Settings.color(pl.getConfig().getString("staff.chat-format", "&8[&cStaff&8] &f%player%&8: &7%message%")
+                .replace("%player%", from).replace("%message%", message));
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (p.hasPermission("vyxac.staff") || p.hasPermission("vyxac.admin")) p.sendMessage(line);
         }
+        Bukkit.getConsoleSender().sendMessage(line);
+    }
+
+    // ------------------------------------------------------------------ random teleport
+
+    public void randomTeleport(Player p) {
+        List<Player> c = new ArrayList<>();
+        for (Player o : Bukkit.getOnlinePlayers()) {
+            if (!o.equals(p) && !isStaffMode(o.getUniqueId()) && !o.hasPermission("vyxac.staff")) c.add(o);
+        }
+        if (c.isEmpty()) {
+            msg(p, "&7Nobody to teleport to.");
+            return;
+        }
+        Player t = c.get(ThreadLocalRandom.current().nextInt(c.size()));
+        p.teleport(t);
+        msg(p, "&7Teleported to &f" + t.getName() + "&7.");
+    }
+
+    // ------------------------------------------------------------------ chat prompts
+
+    public void await(UUID staff, Await a) {
+        awaiting.put(staff, a);
+    }
+
+    /** returns the pending prompt (and clears it), or null when there is none / it expired after 2 minutes */
+    public Await takeAwait(UUID staff) {
+        Await a = awaiting.remove(staff);
+        if (a == null) return null;
+        return System.currentTimeMillis() - a.at > 120_000L ? null : a;
+    }
+
+    public boolean hasAwait(UUID staff) {
+        return awaiting.containsKey(staff);
+    }
+
+    public void cleanup(UUID id) {
+        chatMode.remove(id);
+        awaiting.remove(id);
+    }
+
+    // ------------------------------------------------------------------ notes
+
+    public void addNote(UUID target, String targetName, String staff, String text) {
+        String clean = text.replaceAll("[&\u00a7|]", "");
+        List<String> l = new ArrayList<>(notes.getStringList("notes." + target + ".list"));
+        l.add(System.currentTimeMillis() + "|" + staff + "|" + clean);
+        notes.set("notes." + target + ".name", targetName);
+        notes.set("notes." + target + ".list", l);
+        try {
+            notes.save(notesFile);
+        } catch (IOException ex) {
+            pl.getLogger().warning("Could not save notes: " + ex.getMessage());
+        }
+    }
+
+    /** each entry: {time, staff, text} */
+    public List<String[]> notes(UUID target) {
+        List<String[]> out = new ArrayList<>();
+        for (String s : notes.getStringList("notes." + target + ".list")) {
+            String[] p = s.split("\\|", 3);
+            if (p.length == 3) out.add(p);
+        }
+        return out;
     }
 }

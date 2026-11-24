@@ -1,90 +1,39 @@
-# ============================================================
-#  VyxAC configuration
-#  Per-check sections (checks.<name>.*) are generated automatically
-#  on first start. Edit here or use /vyxac configure <path> <value>.
-# ============================================================
-general:
-  prefix: "&8[&bVyxAC&8] &7"
-  enabled: true
-  exempt-bedrock: true        # skip Bedrock/Floodgate players (name starts with the prefix below)
-  bedrock-prefix: "."
-  join-grace-seconds: 8       # no checks right after joining
-  teleport-grace-ms: 1500
-  velocity-grace-ms: 2500     # knockback / explosions / pistons
-  require-swing: true         # combat checks only run on hits that came with a swing (keeps RPG/skill plugins safe)
-  cancel-hit-ms: 1500         # how long hits are cancelled after a mitigated combat flag
-  max-rewind-ms: 800          # lag-compensation cap for hit validation
-  rewind-extra-ms: 100
-
-lag:
-  min-tps: 17.0               # flags are ignored while TPS is below this or after a long tick
-  max-ping: 600               # combat checks skip players above this ping
-
-violations:
-  decay-per-minute: 1.0       # every check's VL decays by this much per minute
-
-alerts:
-  default-on: true
-  console: true
-  hover: true                 # hover over an alert for details
-  buttons: true               # [Punish] [Kick] [Teleport] buttons on every alert
-  cooldown-ms: 1500           # per player+check
-  sound: ""                   # e.g. block.note_block.pling  (empty = off)
-  discord-webhook: ""
-  format: "&8[&bVyxAC&8] &f%player% &7failed &c%check% &8(&7%info%&8) &8[&e%vl%&8/&c%punish_vl%&8] &7ping &f%ping% &7tps &f%tps%"
-
-punishments:
-  # ALERT_ONLY = never punish, REVIEW = ask staff to approve (click), AUTO = punish automatically
-  mode: REVIEW
-  min-distinct-checks: 2      # evidence from at least this many different punishable checks...
-  min-flags: 6                # ...and at least this many flags inside the window
-  window-seconds: 180
-  ai-corroboration-confidence: 0.90   # the mini AI counts as one extra piece of evidence above this
-  grace-seconds: 30
-  cooldown-seconds: 120
-  max-ping: 400
-  auto-delay-ticks: 60
-  review-cooldown-seconds: 300
-  ladder:
-    - "kick %player% &c[VyxAC] Unfair advantage detected (%check%)"
-    - "kick %player% &c[VyxAC] Unfair advantage detected (%check%) - repeated"
-    - "ban %player% &c[VyxAC] Unfair advantage detected (%check%). Appeal if this is a mistake."
-
-features:
-  mitigation: true            # cancel hits / blocks from flagged combat and world actions
-  mitigate-movement: false    # also move players back on flagged MOVEMENT (can feel like rubber-banding: leave off unless you need it)
-  lag-protection: true
-  log-to-file: true
-  ai: true
-
-reports:
-  enabled: true
-  cooldown-seconds: 60        # between two reports of the same player
-  max-open-per-player: 3
-  notify-staff: true          # tell online staff when a report arrives
-  discord: true               # also post new reports to the Discord webhook
-  show-staff-name: true       # tell the reporter which staff member answered
-  keep-closed-days: 14
-  messages:
-    submitted: "&aReport #%id% against &f%target% &asent. Staff will review it. Thank you!"
-    dismissed: "&7Your report #%id% against &f%target% &7was reviewed: no violation was found. %note%"
-    actioned: "&aYour report #%id% against &f%target% &awas reviewed and action was taken. %note%"
-    reply: "&b[Reports] &f%staff% &7replied on #%id%: &f%message%"
-
-staff:
-  chat-format: "&8[&cStaff&8] &f%player%&8: &7%message%"
-  freeze-quit-command: ""     # runs when a frozen player logs out, e.g. "ban %player% Logged out while frozen" (empty = nothing)
-
-diagnostics:
-  enabled: true               # daily report in plugins/VyxAC/diagnostics/ (which checks look noisy, who looks like a cheater)
-  notify-staff: true          # tell admins when the daily report is ready
-  console: true               # print the report summary to the console
-
-ai:
-  interval-seconds: 3
-  min-attacks: 16
-  sensitivity: 1.0            # higher = stricter
-  alert-confidence: 0.88
-  max-micros-per-second: 8000 # hard CPU budget for all AI work per second
-  deep: true                  # ten features: entropy, mouse-step quantisation, accuracy, snap, reach, self-history
-  learning: true              # the model learns from staff Punish / Dismiss and from confirmed hack clients
+# CheckHacks messages (ru). MiniMessage colours, & codes and PlaceholderAPI work. Result words (DETECTED ...) are status codes.
+prefix: "<gray>[<aqua>CheckHacks</aqua>]</gray> "
+no-permission: "<red>У вас нет прав."
+player-not-found: "<red>Игрок <white>%player%</white> не в сети."
+usage: "<gray>Использование: <white>/checkhacks <игрок> [моды|категория|all]</white>"
+unavailable: "<red>CheckHacks недоступен: <white>%reason%</white>"
+disabled: "<red>CheckHacks отключён в checkhacks.yml."
+check-started: "<gray>Проверка <white>%player%</white> (<white>%count%</white> модов)..."
+cooldown: "<red>%player% недавно проверялся. Подождите <white>%seconds%с</white>."
+busy: "<red>%player% уже проверяется."
+bedrock-skipped: "<gray>%player% играет на Bedrock: пропущен."
+result-header: "<gray>Результат для <white>%player%</white> <dark_gray>|</dark_gray> <gray>%reason% <dark_gray>(запустил %checker%)</dark_gray>"
+result-line: "<gray> - <white>%mod%</white><dark_gray>:</dark_gray> %result%"
+result-detected: "<red><bold>DETECTED</bold></red>"
+result-not-detected: "<green>NOT_DETECTED</green>"
+result-protected: "<yellow>PROTECTED</yellow>"
+result-skipped: "<gray>SKIPPED</gray>"
+result-clean: "<green>%player% выглядит чистым.</green>"
+reason-manual: "ручная проверка"
+reason-join: "проверка при входе"
+reason-anticheat: "сигнал античита"
+reason-web: "веб-редактор"
+reason-vyxac: "сигнал VyxAC"
+alerts-on: "<green>Оповещения CheckHacks включены.</green>"
+alerts-off: "<red>Оповещения CheckHacks отключены.</red>"
+editor-disabled: "<red>Веб-редактор отключён (web.enabled в checkhacks.yml).</red>"
+editor-link: "<gray>Вход в веб-редактор (одноразовый, действует %minutes% мин):</gray> <aqua>%url%</aqua>"
+update-available: "<aqua>Доступен VyxAC %version%!</aqua> <white>Нажмите здесь, чтобы скачать.</white>"
+update-downloading: "<gray>Загрузка %version%...</gray>"
+update-complete: "<green>Загрузка завершена! Перезапустите сервер.</green>"
+update-restart-required: "<yellow>Перезапустите сервер, чтобы завершить обновление.</yellow>"
+update-failed: "<red>Не удалось обновить: %reason%</red>"
+update-no-update: "<green>У вас последняя версия.</green>"
+update-disabled: "<red>Обновление отключено (updater.enabled / updater.repo в checkhacks.yml).</red>"
+lang-line: "<gray>%player% использует язык клиента <white>%language%</white> <dark_gray>(%code%)</dark_gray>"
+list-header: "<gray>Моды, которые может обнаружить проверка:</gray>"
+no-history: "<gray>Проверки не найдены.</gray>"
+probe-result: "<gray>Проба <white>%key%</white> ответила: <white>%answer%</white> <dark_gray>(%verdict%)</dark_gray>"
+reloaded: "<green>Конфигурация CheckHacks перезагружена.</green>"

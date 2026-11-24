@@ -1,183 +1,341 @@
-package com.vyxac.hacks;
+package com.vyxac;
 
-import com.vyxac.VyxAC;
-import net.md_5.bungee.api.ChatColor;
 import org.bukkit.Bukkit;
-import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.OfflinePlayer;
+import org.bukkit.command.CommandSender;
 import org.bukkit.entity.Player;
 
-import java.io.File;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
-/**
- * Messages in messages/&lt;lang&gt;.yml. Supports MiniMessage colour tags (a practical subset: named colours, &lt;#rrggbb&gt;,
- * bold / italic / underlined / strikethrough / obfuscated / reset), legacy &amp; codes and PlaceholderAPI.
- */
-public final class HackText {
-    public static final String[] LANGUAGES = {"en", "es", "de", "fr", "it", "pt", "ru", "nl", "tr"};
-    private static final Map<String, ChatColor> COLORS = new HashMap<>();
-    private static final Map<String, ChatColor> FORMATS = new HashMap<>();
-
-    static {
-        String[][] c = {{"black", "BLACK"}, {"dark_blue", "DARK_BLUE"}, {"dark_green", "DARK_GREEN"}, {"dark_aqua", "DARK_AQUA"},
-                {"dark_red", "DARK_RED"}, {"dark_purple", "DARK_PURPLE"}, {"gold", "GOLD"}, {"gray", "GRAY"}, {"grey", "GRAY"},
-                {"dark_gray", "DARK_GRAY"}, {"dark_grey", "DARK_GRAY"}, {"blue", "BLUE"}, {"green", "GREEN"}, {"aqua", "AQUA"},
-                {"red", "RED"}, {"light_purple", "LIGHT_PURPLE"}, {"yellow", "YELLOW"}, {"white", "WHITE"}};
-        for (String[] e : c) COLORS.put(e[0], ChatColor.valueOf(e[1]));
-        String[][] f = {{"bold", "BOLD"}, {"b", "BOLD"}, {"italic", "ITALIC"}, {"i", "ITALIC"}, {"em", "ITALIC"},
-                {"underlined", "UNDERLINE"}, {"u", "UNDERLINE"}, {"strikethrough", "STRIKETHROUGH"}, {"st", "STRIKETHROUGH"},
-                {"obfuscated", "MAGIC"}, {"obf", "MAGIC"}};
-        for (String[] e : f) FORMATS.put(e[0], ChatColor.valueOf(e[1]));
-    }
+/** /vac report, /vyxac reports, /vyxac staff ..., /vyxac test ... */
+public final class ExtraCommands {
+    private static final List<String> STAFF_SUBS = Arrays.asList("mode", "vanish", "freeze", "unfreeze", "frozen", "inspect",
+            "players", "list", "chat", "note", "notes", "rtp");
 
     private final VyxAC pl;
-    private final Map<String, String> messages = new HashMap<>();
-    private final Map<String, String> fallback = new HashMap<>();
+    private final StaffGui gui;
+    private final SelfTest test;
 
-    public HackText(VyxAC pl) {
+    public ExtraCommands(VyxAC pl, StaffGui gui, SelfTest test) {
         this.pl = pl;
+        this.gui = gui;
+        this.test = test;
     }
 
-    public void load(String lang) {
-        messages.clear();
-        fallback.clear();
-        for (String code : LANGUAGES) {
-            File f = new File(pl.getDataFolder(), "messages/" + code + ".yml");
-            if (!f.exists() && pl.getResource("messages/" + code + ".yml") != null) pl.saveResource("messages/" + code + ".yml", false);
+    private void msg(CommandSender s, String t) {
+        s.sendMessage(Settings.color(pl.settings().prefix + t));
+    }
+
+    // ===================================================================================== /vac report
+
+    public void report(CommandSender s, String[] a) {
+        if (!(s instanceof Player p)) {
+            msg(s, "&cOnly players can send reports.");
+            return;
         }
-        read(fallback, new InputStreamReaderHolder(pl).en());
-        File f = new File(pl.getDataFolder(), "messages/" + lang.toLowerCase(Locale.ROOT) + ".yml");
-        if (f.exists()) {
-            YamlConfiguration y = YamlConfiguration.loadConfiguration(f);
-            for (String k : y.getKeys(false)) messages.put(k, y.getString(k, ""));
+        if (a.length >= 2 && a[1].equalsIgnoreCase("list")) {
+            List<Report> l = pl.reports().byReporter(p.getUniqueId());
+            if (l.isEmpty()) {
+                msg(s, "&7You have not sent any reports.");
+                return;
+            }
+            msg(s, "&fYour latest reports:");
+            for (int i = 0; i < Math.min(8, l.size()); i++) {
+                Report r = l.get(i);
+                s.sendMessage(Settings.color("&7#" + r.id + " &f" + r.targetName + " &8- &7" + r.status.toLowerCase(Locale.ROOT)));
+            }
+            return;
         }
-    }
-
-    private static void read(Map<String, String> into, YamlConfiguration y) {
-        if (y == null) return;
-        for (String k : y.getKeys(false)) into.put(k, y.getString(k, ""));
-    }
-
-    /** helper that reads the bundled English file as the fallback for missing keys */
-    private static final class InputStreamReaderHolder {
-        private final VyxAC pl;
-
-        InputStreamReaderHolder(VyxAC pl) {
-            this.pl = pl;
+        if (a.length < 3) {
+            msg(s, "&7Usage: &f/vac report <player> <reason> &7or &f/vac report list");
+            return;
         }
-
-        YamlConfiguration en() {
-            var in = pl.getResource("messages/en.yml");
-            return in == null ? null : YamlConfiguration.loadConfiguration(new InputStreamReader(in, StandardCharsets.UTF_8));
-        }
+        String err = pl.reports().submit(p, a[1], String.join(" ", Arrays.copyOfRange(a, 2, a.length)));
+        if (err != null) s.sendMessage(err);
     }
 
-    public String raw(String key) {
-        String v = messages.get(key);
-        if (v == null || v.isEmpty()) v = fallback.get(key);
-        return v == null ? key : v;
-    }
+    // ===================================================================================== /vyxac reports
 
-    /** coloured message; kv = placeholder, value, placeholder, value ... (placeholders are written %name% in the files) */
-    public String msg(String key, String... kv) {
-        String s = raw(key);
-        for (int i = 0; i + 1 < kv.length; i += 2) s = s.replace("%" + kv[i] + "%", kv[i + 1] == null ? "" : kv[i + 1]);
-        return color(s);
-    }
-
-    public String prefixed(String key, String... kv) {
-        return color(raw("prefix")) + msg(key, kv);
-    }
-
-    // ------------------------------------------------------------------ colours
-
-    public static String color(String s) {
-        if (s == null) return "";
-        return org.bukkit.ChatColor.translateAlternateColorCodes('&', mini(s));
-    }
-
-    public static String strip(String s) {
-        return org.bukkit.ChatColor.stripColor(s);
-    }
-
-    /** MiniMessage subset to legacy section codes */
-    static String mini(String s) {
-        StringBuilder out = new StringBuilder();
-        List<String[]> stack = new ArrayList<>(); // {tag name, code}
-        int i = 0;
-        while (i < s.length()) {
-            char ch = s.charAt(i);
-            if (ch != '<') {
-                out.append(ch);
-                i++;
-                continue;
+    public void reports(CommandSender s, String[] a) {
+        String sub = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+        if (sub.equals("view") && a.length >= 3) {
+            int id;
+            try {
+                id = Integer.parseInt(a[2].replace("#", ""));
+            } catch (NumberFormatException e) {
+                msg(s, "&7Usage: /vyxac reports view <id>");
+                return;
             }
-            int end = s.indexOf('>', i);
-            if (end < 0 || end - i > 40) {
-                out.append(ch);
-                i++;
-                continue;
+            Report r = pl.reports().get(id);
+            if (r == null) {
+                msg(s, "&cNo report with id " + id + ".");
+                return;
             }
-            String tag = s.substring(i + 1, end).toLowerCase(Locale.ROOT);
-            boolean closing = tag.startsWith("/");
-            String name = closing ? tag.substring(1) : tag;
-            if (name.startsWith("color:")) name = name.substring(6);
-            String code = null;
-            if (COLORS.containsKey(name)) code = COLORS.get(name).toString();
-            else if (FORMATS.containsKey(name)) code = FORMATS.get(name).toString();
-            else if (name.matches("#[0-9a-f]{6}")) code = ChatColor.of(name).toString();
-            else if (name.equals("reset") || name.equals("r")) {
-                if (!closing) {
-                    stack.clear();
-                    out.append(ChatColor.RESET);
-                    i = end + 1;
-                    continue;
-                }
-            }
-            if (code == null) { // not a known tag: keep it as plain text
-                out.append(ch);
-                i++;
-                continue;
-            }
-            if (!closing) {
-                stack.add(new String[]{name, code});
-                out.append(code);
+            if (s instanceof Player p) {
+                gui.openReport(p, id);
             } else {
-                for (int k = stack.size() - 1; k >= 0; k--) {
-                    if (stack.get(k)[0].equals(name)) {
-                        stack.remove(k);
-                        break;
-                    }
-                }
-                out.append(ChatColor.RESET);
-                for (String[] st : stack) out.append(st[1]);
+                msg(s, "#" + r.id + " " + r.reporterName + " -> " + r.targetName + " [" + r.status + "]: " + r.reason + " | " + r.snapshot);
             }
-            i = end + 1;
+            return;
         }
-        return out.toString();
+        if (s instanceof Player p && !sub.equals("list")) {
+            gui.openReports(p, sub.equals("closed"), "", 0);
+            return;
+        }
+        List<Report> l = sub.equals("closed") ? pl.reports().closed(20) : pl.reports().open();
+        if (l.isEmpty()) {
+            msg(s, "&7No " + (sub.equals("closed") ? "closed" : "open") + " reports.");
+            return;
+        }
+        msg(s, "&f" + (sub.equals("closed") ? "Closed" : "Open") + " reports:");
+        for (int i = 0; i < Math.min(15, l.size()); i++) {
+            Report r = l.get(i);
+            s.sendMessage(Settings.color("&e#" + r.id + " &7" + r.reporterName + " &8-> &c" + r.targetName + " &8[" + r.status + "] &f" + r.reason));
+        }
     }
 
-    public static String papi(Player p, String s) {
-        try {
-            if (p == null || Bukkit.getPluginManager().getPlugin("PlaceholderAPI") == null) return s;
-            Class<?> c = Class.forName("me.clip.placeholderapi.PlaceholderAPI");
-            return (String) c.getMethod("setPlaceholders", Player.class, String.class).invoke(null, p, s);
-        } catch (Throwable t) {
-            return s;
+    // ===================================================================================== /vyxac staff
+
+    private Player online(CommandSender s, String name) {
+        Player t = Bukkit.getPlayerExact(name);
+        if (t == null) msg(s, "&cPlayer &f" + name + " &cis not online.");
+        return t;
+    }
+
+    public void staff(CommandSender s, String[] a) {
+        String sub = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "mode";
+        StaffManager st = pl.staff();
+        Player me = s instanceof Player pp ? pp : null;
+        boolean needsPlayer = !(sub.equals("list") || sub.equals("frozen") || sub.equals("notes") || sub.equals("note")
+                || (sub.equals("chat") && a.length > 2));
+        if (needsPlayer && me == null) {
+            msg(s, "&cThat is for players in game.");
+            return;
+        }
+        switch (sub) {
+            case "mode", "toggle" -> st.toggle(me);
+            case "on" -> {
+                if (!st.enter(me)) msg(s, "&7You are already in staff mode.");
+            }
+            case "off" -> {
+                if (!st.exit(me, false)) msg(s, "&7You are not in staff mode.");
+            }
+            case "vanish", "v" -> st.toggleVanish(me);
+            case "rtp" -> st.randomTeleport(me);
+            case "players" -> gui.openPlayers(me, 0, false);
+            case "list" -> {
+                List<String> l = st.staffModeNames();
+                msg(s, "&fStaff in staff mode: &7" + (l.isEmpty() ? "nobody" : String.join(", ", l)));
+            }
+            case "frozen" -> {
+                List<String> l = st.frozenNames();
+                msg(s, "&fFrozen players: &7" + (l.isEmpty() ? "nobody" : String.join(", ", l)));
+            }
+            case "freeze" -> {
+                if (a.length < 3) {
+                    msg(s, "&7Usage: /vyxac staff freeze <player>");
+                    return;
+                }
+                Player t = online(s, a[2]);
+                if (t == null) return;
+                if (st.isFrozen(t.getUniqueId())) msg(s, "&7Already frozen. Use /vyxac staff unfreeze " + t.getName());
+                else st.toggleFreeze(t, me);
+            }
+            case "unfreeze" -> {
+                if (a.length < 3) {
+                    msg(s, "&7Usage: /vyxac staff unfreeze <player>");
+                    return;
+                }
+                Player t = online(s, a[2]);
+                if (t == null) return;
+                if (!st.isFrozen(t.getUniqueId())) msg(s, "&7That player is not frozen.");
+                else st.toggleFreeze(t, me);
+            }
+            case "inspect" -> {
+                if (a.length < 3) {
+                    msg(s, "&7Usage: /vyxac staff inspect <player>");
+                    return;
+                }
+                Player t = online(s, a[2]);
+                if (t != null) gui.openInspect(me, t.getUniqueId());
+            }
+            case "chat", "c" -> {
+                if (a.length > 2) st.staffChat(s.getName(), String.join(" ", Arrays.copyOfRange(a, 2, a.length)));
+                else st.toggleChat(me);
+            }
+            case "note" -> {
+                if (a.length < 4) {
+                    msg(s, "&7Usage: /vyxac staff note <player> <text>");
+                    return;
+                }
+                OfflinePlayer op = resolve(a[2]);
+                if (op == null) {
+                    msg(s, "&cUnknown player.");
+                    return;
+                }
+                st.addNote(op.getUniqueId(), op.getName() == null ? a[2] : op.getName(), s.getName(), String.join(" ", Arrays.copyOfRange(a, 3, a.length)));
+                msg(s, "&aNote saved.");
+            }
+            case "notes" -> {
+                if (a.length < 3) {
+                    msg(s, "&7Usage: /vyxac staff notes <player>");
+                    return;
+                }
+                OfflinePlayer op = resolve(a[2]);
+                if (op == null) {
+                    msg(s, "&cUnknown player.");
+                    return;
+                }
+                List<String[]> notes = st.notes(op.getUniqueId());
+                msg(s, "&fNotes for " + (op.getName() == null ? a[2] : op.getName()) + " &7(" + notes.size() + ")");
+                for (String[] n : notes) s.sendMessage(Settings.color("&b" + n[1] + "&7: &f" + n[2]));
+            }
+            default -> {
+                msg(s, "&fStaff commands:");
+                for (String l : new String[]{
+                        "&b/vyxac staff &7- staff mode: vanish, flight, hotbar tools",
+                        "&b/vyxac staff vanish &7- toggle vanish only",
+                        "&b/vyxac staff freeze|unfreeze <player> &7- freeze a suspect",
+                        "&b/vyxac staff inspect <player> &7- violations, AI, notes",
+                        "&b/vyxac staff players &7- online player list",
+                        "&b/vyxac staff chat [message] &7- staff-only chat",
+                        "&b/vyxac staff note|notes <player> [text] &7- private notes",
+                        "&b/vyxac staff rtp &7- teleport to a random player",
+                        "&b/vyxac reports &7- open the report tickets"}) {
+                    s.sendMessage(Settings.color(l));
+                }
+            }
         }
     }
 
-    public static int hex(String color) {
-        try {
-            return Integer.parseInt(color.replace("#", ""), 16) & 0xFFFFFF;
-        } catch (NumberFormatException e) {
-            return 0xFF5555;
+    private OfflinePlayer resolve(String name) {
+        Player p = Bukkit.getPlayerExact(name);
+        if (p != null) return p;
+        OfflinePlayer op = Bukkit.getOfflinePlayer(name);
+        return op.hasPlayedBefore() ? op : null;
+    }
+
+    // ===================================================================================== /vyxac preset
+
+    /** One command to make Reach / Hitbox / Backtrack stricter or more relaxed. */
+    public void preset(CommandSender s, String[] a) {
+        String name = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+        double reachTol, reachAvg, hitExpand, backExtra;
+        int reachBuf, hitBuf, hitAngle, rewind;
+        switch (name) {
+            case "strict" -> {
+                reachTol = 0.2; reachBuf = 1; reachAvg = 2.9;
+                hitExpand = 0.1; hitBuf = 1; hitAngle = 8;
+                backExtra = 80; rewind = 80;
+            }
+            case "normal", "balanced" -> {
+                reachTol = 0.3; reachBuf = 1; reachAvg = 3.0;
+                hitExpand = 0.15; hitBuf = 2; hitAngle = 10;
+                backExtra = 120; rewind = 100;
+            }
+            case "relaxed", "lenient" -> {
+                reachTol = 0.55; reachBuf = 2; reachAvg = 3.15;
+                hitExpand = 0.4; hitBuf = 3; hitAngle = 20;
+                backExtra = 250; rewind = 150;
+            }
+            default -> {
+                msg(s, "&7Usage: &f/vyxac preset <strict|normal|relaxed>");
+                msg(s, "&7strict: flags the most (more false flags with laggy players)");
+                msg(s, "&7normal: the default");
+                msg(s, "&7relaxed: flags less, safest for high-ping servers");
+                return;
+            }
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("checks.Reach.params.tolerance", reachTol);
+        m.put("checks.Reach.params.buffer", reachBuf);
+        m.put("checks.Reach.params.avg-limit", reachAvg);
+        m.put("checks.Hitbox.params.expand", hitExpand);
+        m.put("checks.Hitbox.params.buffer", hitBuf);
+        m.put("checks.Hitbox.params.min-angle", hitAngle);
+        m.put("checks.Backtrack.params.extra-ms", backExtra);
+        m.put("general.rewind-extra-ms", rewind);
+        pl.setConfigValues(m);
+        msg(s, "&aCombat preset &f" + name + " &aapplied: Reach tolerance " + reachTol + ", Hitbox expand " + hitExpand + ", lag window ping+" + rewind + "ms.");
+    }
+
+    // ===================================================================================== /vyxac test
+
+    public void test(CommandSender s, String[] a) {
+        String sub = a.length > 1 ? a[1].toLowerCase(Locale.ROOT) : "";
+        switch (sub) {
+            case "alert" -> test.alert(s);
+            case "webhook" -> test.webhook(s);
+            case "flag" -> {
+                if (a.length < 3) msg(s, "&7Usage: /vyxac test flag <check>");
+                else test.flag(s, a[2]);
+            }
+            case "punish" -> {
+                if (a.length < 3) msg(s, "&7Usage: /vyxac test punish <player>");
+                else test.punish(s, a[2]);
+            }
+            default -> test.run(s);
         }
     }
+
+    // ===================================================================================== tab completion
+
+    private static List<String> filter(List<String> all, String prefix) {
+        String p = prefix.toLowerCase(Locale.ROOT);
+        List<String> out = new ArrayList<>();
+        for (String x : all) if (x.toLowerCase(Locale.ROOT).startsWith(p)) out.add(x);
+        return out;
+    }
+
+    private static List<String> players() {
+        List<String> l = new ArrayList<>();
+        for (Player p : Bukkit.getOnlinePlayers()) l.add(p.getName());
+        return l;
+    }
+
+    public List<String> tab(CommandSender s, String[] a) {
+        String sub = a[0].toLowerCase(Locale.ROOT);
+        switch (sub) {
+            case "report" -> {
+                if (a.length == 2) {
+                    List<String> l = players();
+                    l.add("list");
+                    return filter(l, a[1]);
+                }
+            }
+            case "reports" -> {
+                if (a.length == 2) return filter(Arrays.asList("view", "closed", "list"), a[1]);
+                if (a.length == 3 && a[1].equalsIgnoreCase("view")) {
+                    List<String> ids = new ArrayList<>();
+                    for (Report r : pl.reports().open()) ids.add(Integer.toString(r.id));
+                    return filter(ids, a[2]);
+                }
+            }
+            case "staff" -> {
+                if (a.length == 2) return filter(STAFF_SUBS, a[1]);
+                if (a.length == 3 && Arrays.asList("freeze", "unfreeze", "inspect", "note", "notes").contains(a[1].toLowerCase(Locale.ROOT))) {
+                    return filter(players(), a[2]);
+                }
+            }
+            case "test" -> {
+                if (a.length == 2) return filter(Arrays.asList("alert", "webhook", "flag", "punish"), a[1]);
+                if (a.length == 3 && a[1].equalsIgnoreCase("flag")) {
+                    List<String> l = new ArrayList<>();
+                    for (CheckInfo c : pl.checks().all()) l.add(c.name);
+                    return filter(l, a[2]);
+                }
+                if (a.length == 3 && a[1].equalsIgnoreCase("punish")) return filter(players(), a[2]);
+            }
+            default -> {
+                return new ArrayList<>();
+            }
+        }
+        return new ArrayList<>();
+    }
+
 }

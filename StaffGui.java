@@ -1,315 +1,188 @@
 package com.vyxac;
 
-import net.md_5.bungee.api.chat.ClickEvent;
-import net.md_5.bungee.api.chat.HoverEvent;
-import net.md_5.bungee.api.chat.TextComponent;
-import net.md_5.bungee.api.chat.hover.content.Text;
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.OfflinePlayer;
-import org.bukkit.configuration.ConfigurationSection;
-import org.bukkit.configuration.file.FileConfiguration;
-import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.Material;
+import org.bukkit.Tag;
+import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.block.data.Waterlogged;
+import org.bukkit.entity.ArmorStand;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Shulker;
+import org.bukkit.entity.Vehicle;
+import org.bukkit.util.BoundingBox;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+/**
+ * Block and collision helpers. Everything here is deliberately conservative: whenever the answer is unclear
+ * (unloaded chunk, odd block shape) it errs towards "the player is legitimately supported".
+ */
+public final class Phys {
+    private Phys() {}
 
-/** In-game ticket system: players report, staff claim / reply / dismiss. Stored in plugins/VyxAC/reports.yml. */
-public final class ReportManager {
-    private final VyxAC pl;
-    private final File file;
-    private final Map<Integer, Report> reports = new LinkedHashMap<>();
-    private final Map<UUID, Long> lastReport = new HashMap<>();
-    private int nextId = 1;
-    private boolean enabled = true, notifyStaff = true, discord = true, showStaff = true;
-    private long cooldownMs = 60_000L;
-    private int maxOpen = 3, keepDays = 14;
-    private String mSubmitted = "", mDismissed = "", mActioned = "", mReply = "";
+    /** Result of a ground check. */
+    public static final class Support {
+        public final Material mat;
 
-    public ReportManager(VyxAC pl) {
-        this.pl = pl;
-        this.file = new File(pl.getDataFolder(), "reports.yml");
+        Support(Material mat) {
+            this.mat = mat;
+        }
     }
 
-    public void reload(FileConfiguration c) {
-        enabled = c.getBoolean("reports.enabled", true);
-        cooldownMs = c.getLong("reports.cooldown-seconds", 60) * 1000L;
-        maxOpen = Math.max(1, c.getInt("reports.max-open-per-player", 3));
-        notifyStaff = c.getBoolean("reports.notify-staff", true);
-        discord = c.getBoolean("reports.discord", true);
-        showStaff = c.getBoolean("reports.show-staff-name", true);
-        keepDays = c.getInt("reports.keep-closed-days", 14);
-        mSubmitted = c.getString("reports.messages.submitted", "&aReport #%id% against &f%target% &asent. Staff will review it. Thank you!");
-        mDismissed = c.getString("reports.messages.dismissed", "&7Your report #%id% against &f%target% &7was reviewed: no violation was found. %note%");
-        mActioned = c.getString("reports.messages.actioned", "&aYour report #%id% against &f%target% &awas reviewed and action was taken. %note%");
-        mReply = c.getString("reports.messages.reply", "&b[Reports] &f%staff% &7replied on #%id%: &f%message%");
+    /** Returned when a needed chunk is not loaded: callers must treat the player as supported. */
+    public static final Support UNKNOWN = new Support(null);
+
+    public static int floor(double d) {
+        int i = (int) d;
+        return d < i ? i - 1 : i;
     }
 
-    // ------------------------------------------------------------------ storage
+    /** Block at the position, or null when out of world or the chunk is not loaded (never loads chunks). */
+    public static Block at(World w, int x, int y, int z) {
+        if (y < w.getMinHeight() || y >= w.getMaxHeight()) return null;
+        if (!w.isChunkLoaded(x >> 4, z >> 4)) return null;
+        return w.getBlockAt(x, y, z);
+    }
 
-    public void load() {
-        reports.clear();
-        YamlConfiguration y = YamlConfiguration.loadConfiguration(file);
-        nextId = y.getInt("next-id", 1);
-        ConfigurationSection sec = y.getConfigurationSection("reports");
-        if (sec != null) {
-            for (String key : sec.getKeys(false)) {
-                ConfigurationSection s = sec.getConfigurationSection(key);
-                if (s == null) continue;
-                Report r = new Report();
-                try {
-                    r.id = Integer.parseInt(key);
-                    r.reporterId = UUID.fromString(s.getString("reporter-id", ""));
-                    r.targetId = UUID.fromString(s.getString("target-id", ""));
-                } catch (IllegalArgumentException ex) {
-                    continue;
+    private static boolean isTall(Material t) {
+        return Tag.FENCES.isTagged(t) || Tag.WALLS.isTagged(t) || Tag.FENCE_GATES.isTagged(t);
+    }
+
+    private static int bodyFlags(Block b, boolean checkWaterlogged) {
+        if (b == null) return 0;
+        Material t = b.getType();
+        if (t.isAir()) return 0;
+        if (t == Material.WATER) return MoveCtx.WATER;
+        if (t == Material.BUBBLE_COLUMN) return MoveCtx.WATER | MoveCtx.BUBBLE;
+        if (t == Material.LAVA) return MoveCtx.LAVA;
+        if (t == Material.SEAGRASS || t == Material.TALL_SEAGRASS || t == Material.KELP || t == Material.KELP_PLANT) {
+            return MoveCtx.WATER;
+        }
+        if (Tag.CLIMBABLE.isTagged(t)) return MoveCtx.CLIMB;
+        if (t == Material.COBWEB || t == Material.SWEET_BERRY_BUSH || t == Material.POWDER_SNOW) return MoveCtx.WEB;
+        if (checkWaterlogged && b.getBlockData() instanceof Waterlogged wl && wl.isWaterlogged()) return MoveCtx.WATER;
+        return 0;
+    }
+
+    private static int belowFlags(Block b) {
+        if (b == null) return 0;
+        Material t = b.getType();
+        if (t == Material.ICE || t == Material.PACKED_ICE || t == Material.BLUE_ICE || t == Material.FROSTED_ICE) {
+            return MoveCtx.ICE;
+        }
+        if (t == Material.SLIME_BLOCK || Tag.BEDS.isTagged(t)) return MoveCtx.BOUNCE;
+        if (t == Material.HONEY_BLOCK) return MoveCtx.HONEY;
+        if (t == Material.SOUL_SAND || t == Material.SOUL_SOIL) return MoveCtx.SOUL;
+        return 0;
+    }
+
+    /** Bitmask of MoveCtx.* environment flags around the given feet position. */
+    public static int env(World w, double x, double y, double z) {
+        int bx = floor(x), bz = floor(z);
+        int r = 0;
+        r |= bodyFlags(at(w, bx, floor(y), bz), true);
+        r |= bodyFlags(at(w, bx, floor(y + 0.9), bz), false);
+        r |= bodyFlags(at(w, bx, floor(y + 1.62), bz), false);
+        r |= belowFlags(at(w, bx, floor(y - 0.2), bz));
+        r |= belowFlags(at(w, bx, floor(y - 1.3), bz));
+        return r;
+    }
+
+    /**
+     * Is there a collidable surface whose top is at most {@code tolAbove} below the feet (and at most 0.25 above)?
+     * Returns null when nothing supports the player, {@link #UNKNOWN} when a chunk is not loaded.
+     */
+    public static Support support(World w, double x, double y, double z, double tolAbove) {
+        final double r = 0.3, eps = 0.001;
+        int x0 = floor(x - r + eps), x1 = floor(x + r - eps);
+        int z0 = floor(z - r + eps), z1 = floor(z + r - eps);
+        int y0 = floor(y - tolAbove - 1.5), y1 = floor(y + 0.25);
+        for (int bx = x0; bx <= x1; bx++) {
+            for (int bz = z0; bz <= z1; bz++) {
+                if (!w.isChunkLoaded(bx >> 4, bz >> 4)) return UNKNOWN;
+                for (int by = y0; by <= y1; by++) {
+                    if (by < w.getMinHeight() || by >= w.getMaxHeight()) continue;
+                    Block b = w.getBlockAt(bx, by, bz);
+                    if (b.isPassable() || b.isLiquid()) continue;
+                    BoundingBox bb = b.getBoundingBox();
+                    if (bb.getMaxX() <= x - r + eps || bb.getMinX() >= x + r - eps
+                            || bb.getMaxZ() <= z - r + eps || bb.getMinZ() >= z + r - eps) {
+                        continue;
+                    }
+                    Material t = b.getType();
+                    double top = isTall(t) ? by + 1.5 : bb.getMaxY();
+                    double d = top - y;
+                    if (d >= -tolAbove && d <= 0.25) return new Support(t);
+                    if (Tag.STAIRS.isTagged(t)) { // lower step of a stair
+                        double d2 = by + 0.5 - y;
+                        if (d2 >= -tolAbove && d2 <= 0.25) return new Support(t);
+                    }
                 }
-                r.reporterName = s.getString("reporter", "?");
-                r.targetName = s.getString("target", "?");
-                r.reason = s.getString("reason", "");
-                r.snapshot = s.getString("snapshot", "");
-                r.status = s.getString("status", Report.OPEN);
-                r.claimedBy = s.getString("claimed-by", "");
-                r.closedBy = s.getString("closed-by", "");
-                r.resolution = s.getString("resolution", "");
-                r.createdAt = s.getLong("created", 0);
-                r.closedAt = s.getLong("closed", 0);
-                r.messages.addAll(s.getStringList("messages"));
-                r.unread.addAll(s.getStringList("unread"));
-                reports.put(r.id, r);
-                if (r.id >= nextId) nextId = r.id + 1;
             }
         }
-        prune();
-    }
-
-    public void save() {
-        YamlConfiguration y = new YamlConfiguration();
-        y.set("next-id", nextId);
-        for (Report r : reports.values()) {
-            String b = "reports." + r.id + ".";
-            y.set(b + "reporter-id", r.reporterId.toString());
-            y.set(b + "target-id", r.targetId.toString());
-            y.set(b + "reporter", r.reporterName);
-            y.set(b + "target", r.targetName);
-            y.set(b + "reason", r.reason);
-            y.set(b + "snapshot", r.snapshot);
-            y.set(b + "status", r.status);
-            y.set(b + "claimed-by", r.claimedBy);
-            y.set(b + "closed-by", r.closedBy);
-            y.set(b + "resolution", r.resolution);
-            y.set(b + "created", r.createdAt);
-            y.set(b + "closed", r.closedAt);
-            y.set(b + "messages", r.messages);
-            y.set(b + "unread", r.unread);
-        }
-        try {
-            file.getParentFile().mkdirs();
-            y.save(file);
-        } catch (IOException ex) {
-            pl.getLogger().warning("Could not save reports: " + ex.getMessage());
-        }
-    }
-
-    private void prune() {
-        long limit = System.currentTimeMillis() - keepDays * 86_400_000L;
-        reports.values().removeIf(r -> !r.isOpen() && r.closedAt != 0 && r.closedAt < limit && r.unread.isEmpty());
-    }
-
-    // ------------------------------------------------------------------ queries
-
-    public Report get(int id) {
-        return reports.get(id);
-    }
-
-    public List<Report> open() {
-        List<Report> l = new ArrayList<>();
-        for (Report r : reports.values()) if (r.isOpen()) l.add(r);
-        l.sort((a, b) -> Long.compare(b.createdAt, a.createdAt));
-        return l;
-    }
-
-    public List<Report> closed(int limit) {
-        List<Report> l = new ArrayList<>();
-        for (Report r : reports.values()) if (!r.isOpen()) l.add(r);
-        l.sort((a, b) -> Long.compare(b.closedAt, a.closedAt));
-        return l.size() > limit ? new ArrayList<>(l.subList(0, limit)) : l;
-    }
-
-    public List<Report> byReporter(UUID id) {
-        List<Report> l = new ArrayList<>();
-        for (Report r : reports.values()) if (r.reporterId.equals(id)) l.add(r);
-        l.sort((a, b) -> Long.compare(b.createdAt, a.createdAt));
-        return l;
-    }
-
-    public int openCount() {
-        int n = 0;
-        for (Report r : reports.values()) if (r.isOpen()) n++;
-        return n;
-    }
-
-    public int openAgainst(UUID target) {
-        int n = 0;
-        for (Report r : reports.values()) if (r.isOpen() && r.targetId.equals(target)) n++;
-        return n;
-    }
-
-    // ------------------------------------------------------------------ creating
-
-    private String snapshot(UUID target) {
-        PlayerData pd = pl.dataOrNull(target);
-        if (pd == null) return "target offline: no live data";
-        List<Map.Entry<String, Double>> l = new ArrayList<>(pd.vl.entrySet());
-        l.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < Math.min(3, l.size()); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(l.get(i).getKey()).append(' ').append(String.format("%.1f", l.get(i).getValue()));
-        }
-        return "VyxAC: VL " + String.format("%.1f", pd.totalVl()) + (sb.length() > 0 ? " (" + sb + ")" : "")
-                + ", AI " + String.format("%.0f%%", pd.aiConfidence * 100) + ", ping " + pd.ping;
-    }
-
-    /** @return null on success, otherwise a coloured error message for the reporter */
-    public String submit(Player reporter, String targetName, String rawReason) {
-        if (!enabled) return Settings.color("&cReports are disabled.");
-        long now = System.currentTimeMillis();
-        Long last = lastReport.get(reporter.getUniqueId());
-        if (last != null && now - last < cooldownMs) {
-            return Settings.color("&cPlease wait " + ((cooldownMs - (now - last)) / 1000 + 1) + "s before sending another report.");
-        }
-        String reason = ChatColor.stripColor(rawReason).replaceAll("[&\u00a7]", "").trim();
-        if (reason.length() < 4) return Settings.color("&cPlease give a reason (at least 4 characters).");
-        if (reason.length() > 120) reason = reason.substring(0, 120);
-
-        UUID tid;
-        String tname;
-        Player online = Bukkit.getPlayerExact(targetName);
-        if (online != null) {
-            tid = online.getUniqueId();
-            tname = online.getName();
-        } else {
-            OfflinePlayer op = Bukkit.getOfflinePlayer(targetName);
-            if (!op.hasPlayedBefore()) return Settings.color("&cI do not know a player called &f" + targetName + "&c.");
-            tid = op.getUniqueId();
-            tname = op.getName() == null ? targetName : op.getName();
-        }
-        if (tid.equals(reporter.getUniqueId())) return Settings.color("&cYou cannot report yourself.");
-        int mine = 0;
-        for (Report r : reports.values()) {
-            if (!r.isOpen() || !r.reporterId.equals(reporter.getUniqueId())) continue;
-            mine++;
-            if (r.targetId.equals(tid)) return Settings.color("&cYou already have an open report about &f" + tname + "&c (#" + r.id + ").");
-        }
-        if (mine >= maxOpen) return Settings.color("&cYou already have " + mine + " open reports. Wait until staff handle them.");
-
-        Report r = new Report();
-        r.id = nextId++;
-        r.reporterId = reporter.getUniqueId();
-        r.reporterName = reporter.getName();
-        r.targetId = tid;
-        r.targetName = tname;
-        r.reason = reason;
-        r.createdAt = now;
-        r.snapshot = snapshot(tid);
-        reports.put(r.id, r);
-        lastReport.put(reporter.getUniqueId(), now);
-        save();
-
-        reporter.sendMessage(Settings.color(fill(mSubmitted, r, "", "", "")));
-        announce(r);
         return null;
     }
 
-    private void announce(Report r) {
-        String plain = Settings.color(pl.settings().prefix + "&eNew report &f#" + r.id + " &7" + r.reporterName + " &8-> &c" + r.targetName + "&7: &f" + r.reason + " ");
-        if (notifyStaff) {
-            for (Player st : Bukkit.getOnlinePlayers()) {
-                if (!st.hasPermission("vyxac.staff") && !st.hasPermission("vyxac.admin")) continue;
-                TextComponent tc = new TextComponent(TextComponent.fromLegacyText(plain));
-                TextComponent open = new TextComponent(TextComponent.fromLegacyText(Settings.color("&a[Open]")));
-                open.setClickEvent(new ClickEvent(ClickEvent.Action.RUN_COMMAND, "/vyxac reports view " + r.id));
-                open.setHoverEvent(new HoverEvent(HoverEvent.Action.SHOW_TEXT, new Text(Settings.color("&7Open this ticket"))));
-                tc.addExtra(open);
-                st.spigot().sendMessage(tc);
+    /** Does any solid block overlap the given box? Used for Phase. Unloaded chunks count as empty. */
+    public static boolean solidBox(World w, double x0, double y0, double z0, double x1, double y1, double z1) {
+        for (int bx = floor(x0); bx <= floor(x1); bx++) {
+            for (int bz = floor(z0); bz <= floor(z1); bz++) {
+                if (!w.isChunkLoaded(bx >> 4, bz >> 4)) continue;
+                for (int by = floor(y0); by <= floor(y1); by++) {
+                    if (by < w.getMinHeight() || by >= w.getMaxHeight()) continue;
+                    Block b = w.getBlockAt(bx, by, bz);
+                    if (b.isPassable() || b.isLiquid()) continue;
+                    if (b.getType() == Material.SNOW) continue; // layered snow: outline is taller than collision
+                    BoundingBox bb = b.getBoundingBox();
+                    if (bb.getMaxX() > x0 && bb.getMinX() < x1 && bb.getMaxY() > y0 && bb.getMinY() < y1
+                            && bb.getMaxZ() > z0 && bb.getMinZ() < z1) {
+                        return true;
+                    }
+                }
             }
-            Bukkit.getConsoleSender().sendMessage(plain);
         }
-        if (discord) pl.vio().webhook(ChatColor.stripColor(plain).trim() + " | " + r.snapshot);
-        pl.staff().refreshKits();
+        return false;
     }
 
-    // ------------------------------------------------------------------ staff actions
-
-    public void claim(Report r, String staff) {
-        r.status = Report.CLAIMED;
-        r.claimedBy = staff;
-        save();
-    }
-
-    public void unclaim(Report r) {
-        r.status = Report.OPEN;
-        r.claimedBy = "";
-        save();
-    }
-
-    public void reopen(Report r) {
-        r.status = Report.OPEN;
-        r.claimedBy = "";
-        r.closedBy = "";
-        r.closedAt = 0;
-        r.resolution = "";
-        save();
-        pl.staff().refreshKits();
-    }
-
-    private String fill(String t, Report r, String staff, String message, String note) {
-        return t.replace("%id%", Integer.toString(r.id)).replace("%target%", r.targetName).replace("%staff%", staff)
-                .replace("%message%", message).replace("%note%", note.isEmpty() ? "" : "&7Note: &f" + note);
-    }
-
-    private void tell(Report r, String text) {
-        Player p = Bukkit.getPlayer(r.reporterId);
-        if (p != null && p.isOnline()) p.sendMessage(Settings.color(text));
-        else r.unread.add(text);
-    }
-
-    public void respond(Report r, String staff, String text) {
-        String clean = text.replaceAll("[&\u00a7]", "");
-        r.messages.add(staff + "|" + System.currentTimeMillis() + "|" + clean);
-        tell(r, fill(mReply, r, showStaff ? staff : "Staff", clean, ""));
-        save();
-    }
-
-    public void close(Report r, String staff, boolean actioned, String note) {
-        String clean = note == null ? "" : note.replaceAll("[&\u00a7]", "");
-        r.status = actioned ? Report.ACTIONED : Report.DISMISSED;
-        r.closedBy = staff;
-        r.closedAt = System.currentTimeMillis();
-        r.resolution = clean;
-        if (!clean.isEmpty()) r.messages.add(staff + "|" + r.closedAt + "|" + clean);
-        tell(r, fill(actioned ? mActioned : mDismissed, r, showStaff ? staff : "Staff", "", clean));
-        save();
-        pl.staff().refreshKits();
-    }
-
-    /** called when a player joins: deliver answers that arrived while they were offline */
-    public void deliverPending(Player p) {
-        boolean any = false;
-        for (Report r : reports.values()) {
-            if (!r.reporterId.equals(p.getUniqueId()) || r.unread.isEmpty()) continue;
-            for (String m : r.unread) p.sendMessage(Settings.color(m));
-            r.unread.clear();
-            any = true;
+    /** Is there a solid block directly beside the player at chest height? (distinguishes Spider from Fly) */
+    public static boolean wallNear(World w, double x, double y, double z) {
+        double[][] o = {{0.45, 0}, {-0.45, 0}, {0, 0.45}, {0, -0.45}};
+        for (double[] d : o) {
+            Block b = at(w, floor(x + d[0]), floor(y + 0.5), floor(z + d[1]));
+            if (b != null && !b.isPassable() && !b.isLiquid()) return true;
         }
-        if (any) save();
+        return false;
+    }
+
+    /** Solid block just above the player's head (limits jump height legitimately). */
+    public static boolean ceilingAbove(World w, double x, double y, double z) {
+        Block b = at(w, floor(x), floor(y + 2.1), floor(z));
+        return b != null && !b.isPassable() && !b.isLiquid();
+    }
+
+    /** Solid block a short distance in front of the player along (dx, dz) at feet or head height. */
+    public static boolean blockedAhead(World w, double x, double y, double z, double dx, double dz) {
+        double len = Math.hypot(dx, dz);
+        if (len < 1e-6) return false;
+        double nx = dx / len, nz = dz / len;
+        for (double dist = 0.5; dist <= 1.2; dist += 0.35) {
+            for (double hy = 0.2; hy <= 1.6; hy += 1.4) {
+                Block b = at(w, floor(x + nx * dist), floor(y + hy), floor(z + nz * dist));
+                if (b != null && !b.isPassable() && !b.isLiquid()) return true;
+            }
+        }
+        return false;
+    }
+
+    /** Boats, minecarts, shulkers and armor stands can carry a player without any block below. (expensive: call lazily) */
+    public static boolean entitySupport(Player p) {
+        try {
+            for (Entity e : p.getNearbyEntities(0.9, 1.6, 0.9)) {
+                if (e instanceof Vehicle || e instanceof Shulker || e instanceof ArmorStand) return true;
+            }
+        } catch (Throwable ignored) {
+            // treat as supported on any API trouble
+            return true;
+        }
+        return false;
     }
 }

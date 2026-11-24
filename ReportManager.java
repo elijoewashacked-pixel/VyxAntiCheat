@@ -1,514 +1,505 @@
 package com.vyxac;
 
-import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
-import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
-import org.bukkit.command.CommandSender;
-import org.bukkit.command.TabCompleter;
-import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.GameMode;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.World;
+import org.bukkit.block.Block;
+import org.bukkit.entity.EnderCrystal;
+import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.ThrownPotion;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.EntityResurrectEvent;
+import org.bukkit.event.entity.EntityShootBowEvent;
+import org.bukkit.event.entity.ProjectileLaunchEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.player.PlayerAnimationEvent;
+import org.bukkit.event.player.PlayerAnimationType;
+import org.bukkit.event.player.PlayerSwapHandItemsEvent;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.BoundingBox;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-
-public final class VyxCommand implements CommandExecutor, TabCompleter {
-    private static final List<String> SUBS = Arrays.asList("help", "reload", "alerts", "status", "profile", "history", "clear",
-            "exempt", "punish", "dismiss", "check", "configure", "customize", "special", "ai", "diagnostics", "diagnose", "report", "reports", "staff", "test", "preset", "kick", "tp");
-
-    /** feature name -> config path (used by /vyxac special) */
-    private static final Map<String, String> FEATURES = new LinkedHashMap<>();
-
-    static {
-        FEATURES.put("mode", "punishments.mode");
-        FEATURES.put("mitigation", "features.mitigation");
-        FEATURES.put("mitigate-movement", "features.mitigate-movement");
-        FEATURES.put("lag-protection", "features.lag-protection");
-        FEATURES.put("ai", "features.ai");
-        FEATURES.put("ai-sensitivity", "ai.sensitivity");
-        FEATURES.put("logging", "features.log-to-file");
-        FEATURES.put("require-swing", "general.require-swing");
-        FEATURES.put("bedrock-exempt", "general.exempt-bedrock");
-        FEATURES.put("console-alerts", "alerts.console");
-        FEATURES.put("webhook", "alerts.discord-webhook");
-        FEATURES.put("flood-kick", "checks.PacketFlood.params.kick-at");
-    }
-
+/**
+ * Combat checks. Geometry checks (Reach, Hitbox, Backtrack, KillAura angle) only run on player-vs-player hits,
+ * use the attacker's ping to look back at the target's recent positions (lag compensation) and use wide tolerances.
+ */
+public final class CombatListener implements Listener {
     private final VyxAC pl;
-    private final CustomizeGui gui;
-    private final ExtraCommands extra;
+    private final CheckInfo KA, AIM, AC, TRIG, REACH, HITBOX, CRIT, FASTBOW, AUTOPOT, TOTEM, MULTI, CRYSTAL, BACK;
 
-    public VyxCommand(VyxAC pl, CustomizeGui gui, ExtraCommands extra) {
+    public CombatListener(VyxAC pl) {
         this.pl = pl;
-        this.gui = gui;
-        this.extra = extra;
+        CheckRegistry r = pl.checks();
+        KA = r.get("KillAura");
+        AIM = r.get("AimAssist");
+        AC = r.get("AutoClicker");
+        TRIG = r.get("TriggerBot");
+        REACH = r.get("Reach");
+        HITBOX = r.get("Hitbox");
+        CRIT = r.get("Criticals");
+        FASTBOW = r.get("FastBow");
+        AUTOPOT = r.get("AutoPot");
+        TOTEM = r.get("AutoTotem");
+        MULTI = r.get("MultiAura");
+        CRYSTAL = r.get("AutoCrystal");
+        BACK = r.get("Backtrack");
     }
 
-    /** which permission a subcommand needs (admins may do everything) */
-    private static boolean allowed(CommandSender s, String sub) {
-        if (s.hasPermission("vyxac.admin")) return true;
-        return switch (sub) {
-            case "help" -> true;
-            case "alerts" -> s.hasPermission("vyxac.alerts");
-            case "report" -> s.hasPermission("vyxac.report");
-            case "reports", "staff", "tp", "kick" -> s.hasPermission("vyxac.staff");
-            default -> false;
-        };
-    }
+    // ===================================================================================== helpers
 
-    private void msg(CommandSender s, String text) {
-        s.sendMessage(Settings.color(pl.settings().prefix + text));
-    }
-
-    private PlayerData target(CommandSender s, String name) {
-        Player p = Bukkit.getPlayerExact(name);
-        if (p == null) {
-            msg(s, "&cPlayer &f" + name + " &cis not online.");
-            return null;
-        }
-        return pl.data(p);
-    }
-
-    @Override
-    public boolean onCommand(CommandSender s, Command cmd, String label, String[] a) {
-        String sub = a.length == 0 ? "help" : a[0].toLowerCase(Locale.ROOT);
-        if (!allowed(s, sub)) {
-            msg(s, "&cYou do not have permission.");
-            return true;
-        }
-        try {
-            switch (sub) {
-                case "help" -> help(s);
-                case "reload" -> {
-                    pl.loadAll();
-                    msg(s, "&aConfiguration reloaded (" + pl.checks().all().size() + " checks, mode " + pl.settings().punishMode + ").");
-                }
-                case "alerts" -> alerts(s, a);
-                case "status" -> status(s);
-                case "profile" -> profile(s, a);
-                case "history" -> history(s, a);
-                case "clear" -> clear(s, a);
-                case "exempt" -> exempt(s, a);
-                case "punish" -> {
-                    if (a.length < 2) { msg(s, "&7Usage: /vyxac punish <player>"); break; }
-                    PlayerData pd = target(s, a[1]);
-                    if (pd == null) break;
-                    String top = topCheck(pd);
-                    pl.punish().punish(pd, top, true);
-                    msg(s, "&aPunishment ladder executed for &f" + pd.name + "&a.");
-                }
-                case "dismiss" -> {
-                    if (a.length < 2) { msg(s, "&7Usage: /vyxac dismiss <player>"); break; }
-                    PlayerData pd = target(s, a[1]);
-                    if (pd == null) break;
-                    pl.punish().dismiss(pd);
-                    msg(s, "&aCleared all violations of &f" + pd.name + "&a.");
-                }
-                case "check" -> check(s, a);
-                case "configure" -> configure(s, a);
-                case "customize" -> {
-                    if (s instanceof Player p) gui.open(p);
-                    else msg(s, "&cOnly players can open the GUI. Use /vyxac configure instead.");
-                }
-                case "special" -> special(s, a);
-                case "ai" -> ai(s, a);
-                case "diagnostics", "diagnose" -> diagnostics(s, a);
-                case "report" -> extra.report(s, a);
-                case "reports" -> extra.reports(s, a);
-                case "staff" -> extra.staff(s, a);
-                case "test" -> extra.test(s, a);
-                case "preset" -> extra.preset(s, a);
-                case "kick" -> {
-                    if (a.length < 2) { msg(s, "&7Usage: /vyxac kick <player> [reason]"); break; }
-                    Player t = Bukkit.getPlayerExact(a[1]);
-                    if (t == null) { msg(s, "&cPlayer is not online."); break; }
-                    if (t.hasPermission("vyxac.admin") && !s.hasPermission("vyxac.admin")) { msg(s, "&cYou cannot kick an admin."); break; }
-                    String reason = a.length > 2 ? String.join(" ", Arrays.copyOfRange(a, 2, a.length)) : "Suspicious activity (reviewed by staff)";
-                    reason = reason.replaceAll("[&\u00a7]", "");
-                    pl.vio().log("KICK " + t.getName() + " by " + s.getName() + ": " + reason);
-                    t.kickPlayer(Settings.color("&c[VyxAC] " + reason));
-                    msg(s, "&aKicked &f" + t.getName() + "&a.");
-                }
-                case "tp" -> {
-                    if (!(s instanceof Player p)) { msg(s, "&cPlayers only."); break; }
-                    if (a.length < 2) { msg(s, "&7Usage: /vyxac tp <player>"); break; }
-                    Player t = Bukkit.getPlayerExact(a[1]);
-                    if (t == null) { msg(s, "&cPlayer is not online."); break; }
-                    p.teleport(t);
-                    msg(s, "&aTeleported to &f" + t.getName() + "&a.");
-                }
-                default -> help(s);
-            }
-        } catch (Throwable t) {
-            msg(s, "&cError: " + t.getMessage());
-            pl.getLogger().warning("Command error: " + t);
-        }
-        return true;
-    }
-
-    // ------------------------------------------------------------------ subcommands
-
-    private void help(CommandSender s) {
-        if (!s.hasPermission("vyxac.admin")) {
-            msg(s, "&fVyxAC commands:");
-            if (s.hasPermission("vyxac.report")) {
-                s.sendMessage(Settings.color("&b/vac report <player> <reason> &7- report a player to staff"));
-                s.sendMessage(Settings.color("&b/vac report list &7- your latest reports"));
-            }
-            if (s.hasPermission("vyxac.staff")) {
-                s.sendMessage(Settings.color("&b/vyxac kick|tp <player> &7- the buttons on alerts"));
-                s.sendMessage(Settings.color("&b/vyxac staff &7- staff mode (vanish + tools)"));
-                s.sendMessage(Settings.color("&b/vyxac reports &7- open the report tickets"));
-            }
-            if (s.hasPermission("vyxac.alerts")) s.sendMessage(Settings.color("&b/vyxac alerts [on|off] &7- your alerts"));
-            return;
-        }
-        String[] lines = {
-                "&b/vyxac status &7- server health, AI cost, counts",
-                "&b/vyxac alerts [on|off] &7- your alerts",
-                "&b/vyxac profile <player> &7- violations, AI confidence, strikes",
-                "&b/vyxac history <player> [n] &7- latest flags",
-                "&b/vyxac clear <player|all> &7- reset violations",
-                "&b/vyxac exempt <player> [seconds] &7- temporarily ignore a player (0 = remove)",
-                "&b/vyxac punish|dismiss <player> &7- act on a review prompt",
-                "&b/vyxac check <name> [on|off] &7- enable / disable one check",
-                "&b/vyxac configure [path] [value] &7- read / change any config value",
-                "&b/vyxac customize &7- GUI to toggle checks and features",
-                "&b/vyxac special [feature] [value] &7- mode, mitigation, lag protection, AI, webhook ...",
-                "&b/vyxac ai [status|reset <player>] &7- mini AI",
-                "&b/vyxac diagnostics [now|last] &7- daily report: noisy checks, suspected cheaters, tuning tips",
-                "&b/vyxac test [alert|webhook|flag <check>|punish <player>] &7- self-test, nobody is punished",
-                "&b/vyxac staff &7- staff mode (vanish, tools), freeze, notes, staff chat",
-                "&b/vyxac reports &7- report tickets;  players use &b/vac report <player> <reason>",
-                "&b/vyxac preset <strict|normal|relaxed> &7- Reach / Hitbox strictness in one command",
-                "&b/vyxac kick <player> [reason] &7- kick (also a button on every alert)",
-                "&b/vyxac reload &7- reload config.yml",
-        };
-        msg(s, "&fVyxAC &7commands:");
-        for (String l : lines) s.sendMessage(Settings.color(l));
-    }
-
-    private void alerts(CommandSender s, String[] a) {
-        if (!(s instanceof Player p)) { msg(s, "&cPlayers only."); return; }
-        boolean now = a.length > 1 ? a[1].equalsIgnoreCase("on") : !pl.vio().alertsEnabled(p.getUniqueId());
-        pl.vio().setAlerts(p.getUniqueId(), now);
-        msg(s, "Alerts " + (now ? "&aenabled" : "&cdisabled") + "&7.");
-    }
-
-    private void status(CommandSender s) {
-        Settings st = pl.settings();
-        int on = 0;
-        for (CheckInfo c : pl.checks().all()) if (c.enabled) on++;
-        msg(s, "&fStatus");
-        s.sendMessage(Settings.color("&7TPS: &f" + String.format("%.1f", pl.ticks().tps()) + " &7(lag guard "
-                + (pl.ticks().unstable() ? "&cactive" : "&aidle") + "&7)"));
-        s.sendMessage(Settings.color("&7Checks enabled: &f" + on + "/" + pl.checks().all().size() + "&7, tracked players: &f" + pl.allData().size()));
-        s.sendMessage(Settings.color("&7Punishment mode: &f" + st.punishMode + "&7, mitigation: &f" + st.mitigation + "&7, lag protection: &f" + st.lagProtection));
-        s.sendMessage(Settings.color("&7Mini AI: " + (st.aiEnabled ? "&aon" : "&coff") + " &8" + pl.ai().status()));
-    }
-
-    private String topCheck(PlayerData pd) {
-        String best = "";
-        double v = 0;
-        for (Map.Entry<String, Double> e : pd.vl.entrySet()) {
-            if (e.getValue() > v) {
-                v = e.getValue();
-                best = e.getKey();
-            }
+    /** Smallest distance from the eye to the target's hitbox over the lag-compensation window. */
+    private static double minDist(PlayerData t, Player tp, double ex, double ey, double ez, long now, long windowMs) {
+        double hw = 0.3 * t.scale, hh = 1.8 * t.scale;
+        Location cur = tp.getLocation();
+        double best = Geo.pointBoxDist(ex, ey, ez, cur.getX() - hw, cur.getY(), cur.getZ() - hw, cur.getX() + hw, cur.getY() + hh, cur.getZ() + hw);
+        for (int i = 0; i < t.hCount; i++) {
+            int k = t.histIdx(i);
+            boolean past = now - t.hT[k] > windowMs; // the first sample older than the window was still valid at its start
+            double d = Geo.pointBoxDist(ex, ey, ez, t.hX[k] - hw, t.hY[k], t.hZ[k] - hw, t.hX[k] + hw, t.hY[k] + hh, t.hZ[k] + hw);
+            if (d < best) best = d;
+            if (past) break;
         }
         return best;
     }
 
-    private void profile(CommandSender s, String[] a) {
-        if (a.length < 2) { msg(s, "&7Usage: /vyxac profile <player>"); return; }
-        PlayerData pd = target(s, a[1]);
-        if (pd == null) return;
-        msg(s, "&f" + pd.name + " &7- ping &f" + pd.ping + "&7, flags &f" + pd.flagsTotal + "&7, strikes &f" + pd.strikes
-                + "&7, AI &f" + String.format("%.0f%%", pd.aiConfidence * 100));
-        if (pd.vl.isEmpty()) {
-            s.sendMessage(Settings.color("&aNo violations."));
-            return;
+    private static boolean rayHit(double ox, double oy, double oz, double dx, double dy, double dz, double maxT,
+                                  PlayerData t, Player tp, long now, long windowMs, double expand) {
+        double hw = 0.3 * t.scale + expand, hh = 1.8 * t.scale + expand;
+        Location cur = tp.getLocation();
+        if (Geo.rayHitsBox(ox, oy, oz, dx, dy, dz, maxT, cur.getX() - hw, cur.getY() - expand, cur.getZ() - hw,
+                cur.getX() + hw, cur.getY() + hh, cur.getZ() + hw)) {
+            return true;
         }
-        List<Map.Entry<String, Double>> list = new ArrayList<>(pd.vl.entrySet());
-        list.sort(Comparator.comparingDouble((Map.Entry<String, Double> e) -> e.getValue()).reversed());
-        for (Map.Entry<String, Double> e : list) {
-            CheckInfo ci = pl.checks().find(e.getKey());
-            String extra = ci != null && ci.punishable ? " &8(punish at " + (int) ci.punishVl + ")" : " &8(never punishes)";
-            s.sendMessage(Settings.color("&7- &c" + e.getKey() + " &f" + String.format("%.1f", e.getValue()) + extra));
+        for (int i = 0; i < t.hCount; i++) {
+            int k = t.histIdx(i);
+            boolean past = now - t.hT[k] > windowMs;
+            if (Geo.rayHitsBox(ox, oy, oz, dx, dy, dz, maxT, t.hX[k] - hw, t.hY[k] - expand, t.hZ[k] - hw,
+                    t.hX[k] + hw, t.hY[k] + hh, t.hZ[k] + hw)) {
+                return true;
+            }
+            if (past) break;
         }
+        return false;
     }
 
-    private void history(CommandSender s, String[] a) {
-        if (a.length < 2) { msg(s, "&7Usage: /vyxac history <player> [n]"); return; }
-        PlayerData pd = target(s, a[1]);
-        if (pd == null) return;
-        int n = 10;
-        if (a.length > 2) {
-            try {
-                n = Math.max(1, Math.min(50, Integer.parseInt(a[2])));
-            } catch (NumberFormatException ignored) {
-                // keep default
+    /** Entry distance of the ray into the target box over the lag window (smallest = most lenient), or -1 */
+    private static double rayHitT(double ox, double oy, double oz, double dx, double dy, double dz, double maxT,
+                                  PlayerData t, Player tp, long now, long windowMs, double expand) {
+        double hw = 0.3 * t.scale + expand, hh = 1.8 * t.scale + expand;
+        Location cur = tp.getLocation();
+        double best = Geo.rayBoxT(ox, oy, oz, dx, dy, dz, maxT, cur.getX() - hw, cur.getY() - expand, cur.getZ() - hw,
+                cur.getX() + hw, cur.getY() + hh, cur.getZ() + hw);
+        for (int i = 0; i < t.hCount; i++) {
+            int k = t.histIdx(i);
+            boolean past = now - t.hT[k] > windowMs;
+            double r = Geo.rayBoxT(ox, oy, oz, dx, dy, dz, maxT, t.hX[k] - hw, t.hY[k] - expand, t.hZ[k] - hw,
+                    t.hX[k] + hw, t.hY[k] + hh, t.hZ[k] + hw);
+            if (r >= 0 && (best < 0 || r < best)) best = r;
+            if (past) break;
+        }
+        return best;
+    }
+
+    /** Walks along the camera ray like the client does: 0 = clear, 1 = a cobweb is in the way, 2 = a solid wall is in the way. */
+    private static int occlusion(World w, double ox, double oy, double oz, double dx, double dy, double dz, double t) {
+        if (t < 1.0) return 0;
+        int webRun = 0, wallRun = 0;
+        for (double d = 0.35; d < t - 0.35; d += 0.2) { // ends and corners are ignored on purpose
+            Block b = Phys.at(w, Phys.floor(ox + dx * d), Phys.floor(oy + dy * d), Phys.floor(oz + dz * d));
+            if (b == null) {
+                webRun = wallRun = 0;
+                continue;
+            }
+            Material m = b.getType();
+            if (m == Material.COBWEB) {
+                wallRun = 0;
+                if (++webRun >= 2) return 1;
+            } else if (m.isOccluding()) {
+                webRun = 0;
+                if (++wallRun >= 4) return 2;
+            } else {
+                webRun = wallRun = 0;
             }
         }
-        msg(s, "&fLast flags of " + pd.name + ":");
-        Iterator<PlayerData.FlagRecord> it = pd.history.descendingIterator();
+        return 0;
+    }
+
+    // ===================================================================================== swings
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onSwing(PlayerAnimationEvent e) {
+        if (e.getAnimationType() != PlayerAnimationType.ARM_SWING) return;
+        PlayerData pd = pl.data(e.getPlayer());
+        pd.lastSwingMs = System.currentTimeMillis();
+        pd.evSwings++;
+        pl.ai().onSwing(pd, pd.lastSwingMs);
+    }
+
+    // ===================================================================================== hits
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onHit(EntityDamageByEntityEvent e) {
+        if (!(e.getDamager() instanceof Player p)) return;
+        if (e.getCause() != EntityDamageEvent.DamageCause.ENTITY_ATTACK) return;
+        Settings s = pl.settings();
+        if (!s.enabled) return;
+        PlayerData pd = pl.data(p);
         long now = System.currentTimeMillis();
-        while (it.hasNext() && n-- > 0) {
-            PlayerData.FlagRecord r = it.next();
-            s.sendMessage(Settings.color("&8" + (now - r.time()) / 1000 + "s ago &c" + r.check() + " &7vl " + String.format("%.1f", r.vl()) + " &8- &7" + r.info()));
-        }
-    }
+        if (pd.bypassed(now, s)) return;
+        Entity target = e.getEntity();
+        long prevAttack = pd.lastAttackMs;
+        pd.lastAttackMs = now;
+        if (p.getInventory().getItemInMainHand().getType().name().equals("MACE")) pd.lastLaunch = now; // wind burst launches the attacker
 
-    private void clear(CommandSender s, String[] a) {
-        if (a.length < 2) { msg(s, "&7Usage: /vyxac clear <player|all>"); return; }
-        if (a[1].equalsIgnoreCase("all")) {
-            for (PlayerData pd : pl.allData()) pl.punish().dismiss(pd);
-            msg(s, "&aCleared all violations.");
-            return;
-        }
-        PlayerData pd = target(s, a[1]);
-        if (pd == null) return;
-        pl.punish().dismiss(pd);
-        msg(s, "&aCleared violations of &f" + pd.name + "&a.");
-    }
-
-    private void exempt(CommandSender s, String[] a) {
-        if (a.length < 2) { msg(s, "&7Usage: /vyxac exempt <player> [seconds]"); return; }
-        PlayerData pd = target(s, a[1]);
-        if (pd == null) return;
-        long sec = 300;
-        if (a.length > 2) {
-            try {
-                sec = Long.parseLong(a[2]);
-            } catch (NumberFormatException e) {
-                msg(s, "&cInvalid number.");
+        try {
+            if (target instanceof EnderCrystal) {
+                if (crystal(pd, target, now)) e.setCancelled(true);
                 return;
             }
-        }
-        pd.exemptUntil = sec <= 0 ? 0 : System.currentTimeMillis() + sec * 1000L;
-        pd.resetMotion();
-        msg(s, sec <= 0 ? "&e" + pd.name + " &7is checked again." : "&e" + pd.name + " &7is exempt for &f" + sec + "s&7.");
-    }
-
-    private void check(CommandSender s, String[] a) {
-        if (a.length < 2) {
-            StringBuilder sb = new StringBuilder();
-            for (CheckInfo c : pl.checks().all()) sb.append(c.enabled ? "&a" : "&c").append(c.name).append("&7, ");
-            msg(s, "&fChecks: " + sb);
-            return;
-        }
-        CheckInfo ci = pl.checks().find(a[1]);
-        if (ci == null) { msg(s, "&cUnknown check. Use /vyxac check to list them."); return; }
-        boolean val = a.length > 2 ? a[2].equalsIgnoreCase("on") || a[2].equalsIgnoreCase("true") : !ci.enabled;
-        pl.setConfigValue("checks." + ci.name + ".enabled", val);
-        msg(s, "&f" + ci.name + " &7is now " + (val ? "&aenabled" : "&cdisabled") + "&7. &8" + ci.description);
-    }
-
-    private static Object parse(String raw, Object existing) {
-        if (raw.equalsIgnoreCase("true") || raw.equalsIgnoreCase("false")) return Boolean.parseBoolean(raw);
-        try {
-            if (existing instanceof Double || existing instanceof Float) return Double.parseDouble(raw);
-            if (raw.matches("-?\\d+")) {
-                long l = Long.parseLong(raw);
-                return (l >= Integer.MIN_VALUE && l <= Integer.MAX_VALUE) ? (Object) (int) l : (Object) l;
+            if (s.requireSwing && now - pd.lastSwingMs > 1200) return; // damage that did not come from a real click (plugins)
+            GameMode gm = p.getGameMode();
+            if (gm == GameMode.CREATIVE || gm == GameMode.SPECTATOR) return;
+            if (s.lagProtection && pl.ticks().unstable()) return;
+            if (pd.ping > s.maxPing || now - pd.lastTeleport < 1000 || now - pd.lastRespawn < 2000 || pd.exotic) return;
+            if (analyse(e, p, pd, target, now, prevAttack)) e.setCancelled(true);
+        } catch (Throwable t) {
+            if (now - pd.ts("err") > 60_000L) {
+                pd.ts("err", now);
+                pl.getLogger().warning("Combat check error: " + t);
             }
-            if (raw.matches("-?\\d*\\.\\d+")) return Double.parseDouble(raw);
-        } catch (NumberFormatException ignored) {
-            // fall through to string
         }
-        return raw;
     }
 
-    private void configure(CommandSender s, String[] a) {
-        FileConfiguration c = pl.getConfig();
-        if (a.length < 2) {
-            msg(s, "&fSections: &7general, lag, violations, alerts, punishments, features, ai, checks");
-            msg(s, "&7Examples: &f/vyxac configure punishments.mode AUTO &7| &f/vyxac configure checks.Reach.params.tolerance 0.5");
-            msg(s, "&7Use TAB to complete paths. List values (punishments.ladder) are edited in config.yml.");
-            return;
-        }
-        String path = a[1];
-        if (!c.contains(path)) { msg(s, "&cUnknown path: &f" + path); return; }
-        if (c.isConfigurationSection(path)) {
-            msg(s, "&f" + path + " &7contains: &f" + String.join(", ", c.getConfigurationSection(path).getKeys(false)));
-            return;
-        }
-        Object cur = c.get(path);
-        if (a.length == 2) {
-            msg(s, "&f" + path + " &7= &b" + cur);
-            return;
-        }
-        if (cur instanceof List) { msg(s, "&cLists cannot be changed here. Edit config.yml and run /vyxac reload."); return; }
-        String raw = String.join(" ", Arrays.copyOfRange(a, 2, a.length));
-        Object val = parse(raw, cur);
-        if (cur instanceof Boolean && !(val instanceof Boolean)) { msg(s, "&cThat value is true/false."); return; }
-        if ((cur instanceof Number) && !(val instanceof Number)) { msg(s, "&cThat value is a number."); return; }
-        if (path.equals("punishments.mode")) {
-            String m = raw.toUpperCase(Locale.ROOT);
-            if (!m.equals("ALERT_ONLY") && !m.equals("REVIEW") && !m.equals("AUTO")) { msg(s, "&cMode must be ALERT_ONLY, REVIEW or AUTO."); return; }
-            val = m;
-        }
-        pl.setConfigValue(path, val);
-        msg(s, "&f" + path + " &7set to &b" + val + "&7 (was &8" + cur + "&7).");
-    }
+    /** returns true when the hit should be cancelled (mitigation) */
+    private boolean analyse(EntityDamageByEntityEvent e, Player p, PlayerData pd, Entity target, long now, long prevAttack) {
+        Settings s = pl.settings();
+        boolean cancel = false;
+        Player tp = target instanceof Player t ? t : null;
+        PlayerData pd2 = tp != null ? pl.dataOrNull(tp.getUniqueId()) : null;
 
-    private void special(CommandSender s, String[] a) {
-        FileConfiguration c = pl.getConfig();
-        if (a.length < 2) {
-            msg(s, "&fSpecial features &7(/vyxac special <feature> [value]):");
-            for (Map.Entry<String, String> e : FEATURES.entrySet()) {
-                s.sendMessage(Settings.color("&7- &b" + e.getKey() + " &8= &f" + c.get(e.getValue())));
-            }
-            return;
-        }
-        String path = FEATURES.get(a[1].toLowerCase(Locale.ROOT));
-        if (path == null) { msg(s, "&cUnknown feature. Use /vyxac special to list them."); return; }
-        Object cur = c.get(path);
-        if (a.length == 2) {
-            if (cur instanceof Boolean b) {
-                pl.setConfigValue(path, !b);
-                msg(s, "&f" + a[1] + " &7is now " + (!b ? "&aon" : "&coff") + "&7.");
+        Location eye = p.getEyeLocation();
+        double ex = eye.getX(), ey = eye.getY(), ez = eye.getZ();
+        float yaw = eye.getYaw(), pitch = eye.getPitch();
+        double ldx = Geo.dirX(yaw, pitch), ldy = Geo.dirY(pitch), ldz = Geo.dirZ(yaw, pitch);
+        BoundingBox tb = target.getBoundingBox();
+        double aimErr = Geo.angleDeg(ldx, ldy, ldz, tb.getCenterX() - ex, tb.getCenterY() - ey, tb.getCenterZ() - ez);
+        double dist = Geo.pointBoxDist(ex, ey, ez, tb.getMinX(), tb.getMinY(), tb.getMinZ(), tb.getMaxX(), tb.getMaxY(), tb.getMaxZ());
+        double reaction = pd.lastBigRot != 0 && now - pd.lastBigRot < 600 ? now - pd.lastBigRot : -1;
+
+        // ---------------------------------------------------------------- AutoClicker (hit rhythm / speed)
+        Ring ivr = pd.ring("iv", 30);
+        Ring times = pd.ring("hits", 40);
+        if (prevAttack != 0 && now - prevAttack < 1500) ivr.add(Math.round((now - prevAttack) / 50.0));
+        times.add(now);
+        if (AC.enabled) {
+            int cnt = 0;
+            for (int k = 0; k < times.size(); k++) if (now - (long) times.get(k) <= 1000) cnt++;
+            if (cnt > AC.p("max-cps")) {
+                if (pd.bump("ac_cps", 1) >= 2) {
+                    pd.setBuf("ac_cps", 0);
+                    cancel |= pl.vio().flag(pd, AC, cnt + " hits in one second", 1.5);
+                }
             } else {
-                msg(s, "&f" + a[1] + " &7= &b" + cur);
+                pd.bump("ac_cps", -0.5);
             }
-            return;
-        }
-        String[] rest = new String[]{"configure", path, String.join(" ", Arrays.copyOfRange(a, 2, a.length))};
-        configure(s, rest);
-    }
-
-    private void ai(CommandSender s, String[] a) {
-        if (a.length >= 3 && a[1].equalsIgnoreCase("reset")) {
-            PlayerData pd = target(s, a[2]);
-            if (pd == null) return;
-            pl.ai().resetPlayer(pd);
-            msg(s, "&aAI statistics of &f" + pd.name + " &areset.");
-            return;
-        }
-        if (a.length >= 3 && a[1].equalsIgnoreCase("explain")) {
-            PlayerData pd = target(s, a[2]);
-            if (pd == null) return;
-            for (String l : pl.ai().explain(pd)) s.sendMessage(Settings.color("&7" + l));
-            return;
-        }
-        if (a.length >= 3 && a[1].equalsIgnoreCase("model") && a[2].equalsIgnoreCase("reset")) {
-            pl.ai().resetModel();
-            msg(s, "&aAI model reset to its defaults (learning starts again).");
-            return;
-        }
-        msg(s, "&fMini AI &7(" + (pl.settings().aiEnabled ? "&aon" : "&coff") + "&7): &8" + pl.ai().status());
-        List<PlayerData> list = new ArrayList<>(pl.allData());
-        list.sort(Comparator.comparingDouble((PlayerData p) -> p.aiConfidence).reversed());
-        int shown = 0;
-        for (PlayerData pd : list) {
-            if (pd.aiConfidence < 0.3 || shown++ >= 8) break;
-            s.sendMessage(Settings.color("&7- &f" + pd.name + " &7confidence &c" + String.format("%.0f%%", pd.aiConfidence * 100)));
-        }
-        if (shown == 0) s.sendMessage(Settings.color("&7Nobody is above 30% confidence."));
-    }
-
-    private void diagnostics(CommandSender s, String[] a) {
-        boolean last = a.length > 1 && a[1].equalsIgnoreCase("last");
-        List<String> lines = last ? pl.diagnostics().lastReport() : pl.diagnostics().current();
-        if (lines.isEmpty()) {
-            msg(s, "&7No completed daily report yet. Use &b/vyxac diagnostics now &7for today so far.");
-            return;
-        }
-        for (String l : lines.size() > 45 ? lines.subList(0, 45) : lines) s.sendMessage(Settings.color("&7" + l));
-        msg(s, "&8Reports are saved in plugins/VyxAC/diagnostics/");
-    }
-
-    // ------------------------------------------------------------------ tab completion
-
-    private static List<String> filter(List<String> all, String prefix) {
-        String p = prefix.toLowerCase(Locale.ROOT);
-        List<String> out = new ArrayList<>();
-        for (String x : all) if (x.toLowerCase(Locale.ROOT).startsWith(p)) out.add(x);
-        return out;
-    }
-
-    private static List<String> players() {
-        List<String> l = new ArrayList<>();
-        for (Player p : Bukkit.getOnlinePlayers()) l.add(p.getName());
-        return l;
-    }
-
-    @Override
-    public List<String> onTabComplete(CommandSender s, Command cmd, String alias, String[] a) {
-        if (!s.hasPermission("vyxac.admin")) {
-            List<String> mine = new ArrayList<>();
-            if (s.hasPermission("vyxac.alerts")) mine.add("alerts");
-            if (s.hasPermission("vyxac.report")) mine.add("report");
-            if (s.hasPermission("vyxac.staff")) {
-                mine.add("reports");
-                mine.add("staff");
-            }
-            if (a.length == 1) return filter(mine, a[0]);
-            String f = a[0].toLowerCase(Locale.ROOT);
-            return mine.contains(f) && !f.equals("alerts") ? extra.tab(s, a) : new ArrayList<>();
-        }
-        if (a.length == 1) return filter(SUBS, a[0]);
-        String sub = a[0].toLowerCase(Locale.ROOT);
-        if (sub.equals("report") || sub.equals("reports") || sub.equals("staff") || sub.equals("test")) return extra.tab(s, a);
-        if (a.length == 2) {
-            switch (sub) {
-                case "preset" -> {
-                    return filter(List.of("strict", "normal", "relaxed"), a[1]);
+            if (ivr.full()) {
+                int[] counts = new int[32];
+                int best = 0;
+                for (int k = 0; k < ivr.size(); k++) {
+                    int v = (int) Math.min(31, Math.max(0, ivr.get(k)));
+                    if (++counts[v] > best) best = counts[v];
                 }
-                case "profile", "history", "exempt", "punish", "dismiss", "tp", "kick" -> {
-                    return filter(players(), a[1]);
-                }
-                case "clear" -> {
-                    List<String> l = players();
-                    l.add("all");
-                    return filter(l, a[1]);
-                }
-                case "alerts" -> {
-                    return filter(List.of("on", "off"), a[1]);
-                }
-                case "check" -> {
-                    List<String> l = new ArrayList<>();
-                    for (CheckInfo c : pl.checks().all()) l.add(c.name);
-                    return filter(l, a[1]);
-                }
-                case "special" -> {
-                    return filter(new ArrayList<>(FEATURES.keySet()), a[1]);
-                }
-                case "ai" -> {
-                    return filter(List.of("status", "reset", "explain", "model"), a[1]);
-                }
-                case "diagnostics", "diagnose" -> {
-                    return filter(List.of("now", "last"), a[1]);
-                }
-                case "configure" -> {
-                    List<String> l = new ArrayList<>();
-                    FileConfiguration c = pl.getConfig();
-                    for (String k : c.getKeys(true)) if (!c.isConfigurationSection(k)) l.add(k);
-                    return filter(l, a[1]);
-                }
-                default -> {
-                    return new ArrayList<>();
+                double ratio = best / (double) ivr.size();
+                double meanTicks = ivr.mean();
+                if (ratio >= AC.p("mode-ratio") && meanTicks > 0 && meanTicks <= 20.0 / AC.p("min-cps")) {
+                    if (pd.bump("ac_mode", 1) >= 2) {
+                        pd.setBuf("ac_mode", 0);
+                        ivr.clear();
+                        cancel |= pl.vio().flag(pd, AC, String.format("%.0f%% of clicks have the same delay", ratio * 100), 1.0);
+                    }
+                } else {
+                    pd.bump("ac_mode", -0.25);
                 }
             }
         }
-        if (a.length == 3) {
-            if (sub.equals("check")) return filter(List.of("on", "off"), a[2]);
-            if (sub.equals("ai") && (a[1].equalsIgnoreCase("reset") || a[1].equalsIgnoreCase("explain"))) return filter(players(), a[2]);
-            if (sub.equals("ai") && a[1].equalsIgnoreCase("model")) return filter(List.of("reset"), a[2]);
-            if (sub.equals("special") && a[1].equalsIgnoreCase("mode")) return filter(List.of("ALERT_ONLY", "REVIEW", "AUTO"), a[2]);
-            if (sub.equals("special")) return filter(List.of("true", "false"), a[2]);
-            if (sub.equals("configure")) {
-                if (a[1].equals("punishments.mode")) return filter(List.of("ALERT_ONLY", "REVIEW", "AUTO"), a[2]);
-                Object cur = pl.getConfig().get(a[1]);
-                if (cur instanceof Boolean) return filter(List.of("true", "false"), a[2]);
+
+        // ---------------------------------------------------------------- mini AI sample
+        pl.ai().onHitEx(pd, aimErr, now, reaction, pd.lastBigRotDeg, -1);
+
+        // ---------------------------------------------------------------- TriggerBot (constant, very short reaction)
+        if (TRIG.enabled && reaction >= 0) {
+            Ring rr = pd.ring("react", (int) Math.max(6, TRIG.p("samples")));
+            rr.add(reaction);
+            if (rr.full() && rr.mean() < TRIG.p("max-reaction-ms") && rr.std() < TRIG.p("max-std-ms")) {
+                String info = String.format("camera-to-hit delay %.0fms +-%.0f over %d hits", rr.mean(), rr.std(), rr.size());
+                rr.clear();
+                cancel |= pl.vio().flag(pd, TRIG, info, 1.0);
             }
         }
-        return new ArrayList<>();
+
+        // ---------------------------------------------------------------- Criticals (fake airborne state)
+        if (CRIT.enabled) {
+            double fd = p.getFallDistance();
+            Location l = p.getLocation();
+            boolean candidate = !p.isOnGround() && fd > 0 && fd < CRIT.p("max-fall") && pd.airTicks <= 1
+                    && !p.isInsideVehicle() && !p.isSwimming() && !pd.levitating && !pd.slowFalling
+                    && l.getWorld() != null && Phys.env(l.getWorld(), l.getX(), l.getY(), l.getZ()) == 0
+                    && Phys.support(l.getWorld(), l.getX(), l.getY(), l.getZ(), 0.25) != null
+                    && Phys.support(l.getWorld(), l.getX(), l.getY(), l.getZ(), 0.25) != Phys.UNKNOWN;
+            if (candidate) {
+                if (pd.bump("crit", 1) >= CRIT.p("buffer")) {
+                    pd.setBuf("crit", 0);
+                    cancel |= pl.vio().flag(pd, CRIT, String.format("falling %.2f blocks while standing on the ground", fd), 1.0);
+                }
+            } else {
+                pd.bump("crit", -0.5);
+            }
+        }
+
+        // ---------------------------------------------------------------- MultiAura / KillAura target switching
+        boolean otherTarget = pd.lastTargetId != null && !pd.lastTargetId.equals(target.getUniqueId());
+        if (otherTarget && MULTI.enabled && now - pd.lastTargetMs <= MULTI.p("same-tick-ms")) {
+            cancel |= pl.vio().flag(pd, MULTI, "two different targets hit within " + (now - pd.lastTargetMs) + "ms", 1.0);
+        }
+        if (KA.enabled) {
+            if (otherTarget && now - pd.lastTargetMs < KA.p("switch-ms")) {
+                double dy = Math.abs(Geo.wrap(yaw - pd.lastHitYaw));
+                if (dy > KA.p("switch-angle")) {
+                    if (pd.bump("ka_sw", 1) >= KA.p("buffer")) {
+                        pd.setBuf("ka_sw", 0);
+                        cancel |= pl.vio().flag(pd, KA, String.format("snapped %.0f degrees to a new target in %dms", dy, now - pd.lastTargetMs), 1.0);
+                    }
+                } else {
+                    pd.bump("ka_sw", -0.35);
+                }
+            } else {
+                pd.bump("ka_sw", -0.1);
+            }
+            if (dist > KA.p("min-distance") && aimErr > KA.p("max-angle")) {
+                cancel |= pl.vio().flag(pd, KA, String.format("hit a target %.0f degrees away from the crosshair", aimErr), 2.0);
+            }
+        }
+        pd.lastTargetId = target.getUniqueId();
+        pd.lastTargetMs = now;
+        pd.lastHitYaw = yaw;
+
+        // ---------------------------------------------------------------- geometry (player vs player only)
+        if (tp == null || pd2 == null || pd2.exotic || pd2.hCount < 3 || tp.isInsideVehicle() || tp.isGliding()
+                || now - pd2.lastTeleport < 1500 || now - pd2.lastRespawn < 2000 || !tp.getWorld().equals(p.getWorld())) {
+            return cancel;
+        }
+        long normal = Math.max(100, Math.min(s.maxRewindMs, pd.ping + s.rewindExtraMs));
+        double limit = pd.reachEntity + REACH.p("tolerance");
+        double minNorm = minDist(pd2, tp, ex, ey, ez, now, normal);
+        pd.ai.addReach(minNorm);
+
+        // ---- Reach statistic: legit fighters average well below 3 blocks, a reach cheater hovers just above it
+        if (REACH.enabled) {
+            Ring ra = pd.ring("reachAvg", (int) Math.max(4, REACH.p("avg-hits")));
+            ra.add(minNorm);
+            if (ra.full() && ra.mean() > REACH.p("avg-limit")) {
+                String info = String.format("average hit distance %.2f blocks over %d hits", ra.mean(), ra.size());
+                ra.clear();
+                cancel |= pl.vio().flag(pd, REACH, info, 1.5);
+            }
+        }
+
+        // ---- Reach / Backtrack: out of range even with the lag-compensated positions of the target
+        if (minNorm > limit) {
+            long ext = normal + (long) BACK.p("extra-ms");
+            double minExt = minDist(pd2, tp, ex, ey, ez, now, ext);
+            boolean rescued = minExt <= limit; // a slightly older position would have been in range
+            boolean blatant = minNorm > limit + REACH.p("blatant"); // too far for lag to explain
+            if (!rescued || blatant) {
+                if (REACH.enabled && pd.bump("reach", 1) >= REACH.p("buffer")) {
+                    pd.setBuf("reach", 0);
+                    cancel |= pl.vio().flag(pd, REACH, String.format("%.2f blocks (limit %.2f)", minNorm, limit), Math.min(4.0, 1.0 + (minNorm - limit) * 2));
+                }
+            } else if (BACK.enabled && pd.bump("back", 1) >= BACK.p("buffer")) {
+                pd.setBuf("back", 0);
+                cancel |= pl.vio().flag(pd, BACK, String.format("hit needs a position older than %dms (%.2f blocks away now)", normal, minNorm), 1.0);
+            }
+        } else {
+            pd.bump("reach", -0.5);
+            pd.bump("back", -0.5);
+        }
+
+        // ---- Hitbox: the crosshair must have been on the target. The server's copy of the camera can lag the client's by one
+        // flick, so every angle swept since the previous movement packet is accepted (flicks stay legal, silent aim does not).
+        if (HITBOX.enabled && dist > 0.5 && now - pd.lastBigRot >= HITBOX.p("flick-ms")) {
+            double maxT = Math.max(limit, minNorm) + 1.5;
+            double expand = HITBOX.p("expand");
+            MoveCtx prev = pd.prev;
+            boolean usePrev = prev != null && now - prev.time < 150;
+            double eh = p.getEyeHeight();
+            double[] best = null; // {t, originXYZ, directionXYZ}
+            int rays = usePrev ? 6 : 1;
+            for (int i = 0; i < rays && best == null; i++) {
+                float yw = yaw, pt = pitch;
+                if (i > 0) {
+                    float f = (i - 1) / 5.0f; // previous camera ... almost the current camera
+                    yw = prev.yaw + Geo.wrap(yaw - prev.yaw) * f;
+                    pt = prev.pitch + (pitch - prev.pitch) * f;
+                }
+                double rdx = Geo.dirX(yw, pt), rdy = Geo.dirY(pt), rdz = Geo.dirZ(yw, pt);
+                double t = rayHitT(ex, ey, ez, rdx, rdy, rdz, maxT, pd2, tp, now, normal, expand);
+                if (t >= 0) {
+                    best = new double[]{t, ex, ey, ez, rdx, rdy, rdz};
+                } else if (usePrev) {
+                    t = rayHitT(prev.x, prev.y + eh, prev.z, rdx, rdy, rdz, maxT, pd2, tp, now, normal, expand);
+                    if (t >= 0) best = new double[]{t, prev.x, prev.y + eh, prev.z, rdx, rdy, rdz};
+                }
+            }
+            if (best == null) {
+                if (aimErr > HITBOX.p("min-angle")) {
+                    if (pd.bump("hitbox", 1) >= HITBOX.p("buffer")) {
+                        pd.setBuf("hitbox", 0);
+                        cancel |= pl.vio().flag(pd, HITBOX, String.format("crosshair %.0f degrees off the target", aimErr), 1.0);
+                    }
+                } else {
+                    pd.bump("hitbox", -0.5);
+                }
+            } else {
+                pd.bump("hitbox", -0.5);
+                // blocks between the player and the target along the very ray that hit it
+                int occ = occlusion(p.getWorld(), best[1], best[2], best[3], best[4], best[5], best[6], best[0]);
+                if ((occ == 1 && HITBOX.p("web") > 0) || (occ == 2 && HITBOX.p("wall") > 0)) {
+                    if (pd.bump("hbthru", 1) >= HITBOX.p("through-buffer")) {
+                        pd.setBuf("hbthru", 0);
+                        cancel |= pl.vio().flag(pd, HITBOX, occ == 1 ? "hit a player through a cobweb" : "hit a player through a wall", 2.0);
+                    }
+                } else {
+                    pd.bump("hbthru", -0.5);
+                }
+            }
+        }
+
+        // AimAssist rule: aim locked on the centre of a MOVING target again and again
+        if (AIM.enabled && dist >= AIM.p("min-distance") && pd2.lastH > 0.12 && now - pd2.lastMoveMs < 250) {
+            Ring ar = pd.ring("aim", (int) Math.max(6, AIM.p("window")));
+            ar.add(aimErr);
+            if (ar.full()) {
+                int lock = ar.countBelow(AIM.p("lock-error"));
+                if (lock >= AIM.p("min-lock")) {
+                    ar.clear();
+                    cancel |= pl.vio().flag(pd, AIM, lock + " of the last hits were within " + AIM.p("lock-error") + " degrees of the target centre", 1.0);
+                }
+            }
+        }
+        return cancel;
+    }
+
+    private boolean crystal(PlayerData pd, Entity target, long now) {
+        if (!CRYSTAL.enabled) return false;
+        long placed = pd.lastCrystalPlace;
+        if (placed == 0 || now - placed > 2000) return false;
+        Ring cx = pd.ring("cx", 1), cy = pd.ring("cy", 1), cz = pd.ring("cz", 1);
+        if (cx.size() == 0) return false;
+        Location tl = target.getLocation();
+        double dx = tl.getX() - cx.get(0), dy = tl.getY() - cy.get(0), dz = tl.getZ() - cz.get(0);
+        if (dx * dx + dy * dy + dz * dz > 36) return false; // not the crystal this player placed
+        pd.lastCrystalPlace = 0; // one placement matches one detonation
+        double react = now - placed - pd.ping;
+        if (react < CRYSTAL.p("max-reaction-ms")) {
+            if (pd.bump("crystal", 1) >= CRYSTAL.p("buffer")) {
+                pd.setBuf("crystal", 0);
+                return pl.vio().flag(pd, CRYSTAL, String.format("detonated %.0fms after placing (ping-adjusted)", Math.max(0, react)), 1.0);
+            }
+        } else {
+            pd.bump("crystal", -1);
+        }
+        return false;
+    }
+
+    // ===================================================================================== bow
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onShoot(EntityShootBowEvent e) {
+        if (!(e.getEntity() instanceof Player p) || !FASTBOW.enabled) return;
+        ItemStack bow = e.getBow();
+        if (bow == null || bow.getType() != Material.BOW) return; // crossbows are charged before shooting
+        PlayerData pd = pl.data(p);
+        long now = System.currentTimeMillis();
+        if (pd.bypassed(now, pl.settings())) return;
+        if (pd.useStartMs == 0 || !"BOW".equals(pd.useItem)) return;
+        long elapsed = now - pd.useStartMs;
+        if (elapsed > 8000 || elapsed < 0) return;
+        double f = Math.max(0, (elapsed + FASTBOW.p("tolerance-ms")) / 50.0) / 20.0;
+        double expected = Math.min(1.0, (f * f + f * 2.0) / 3.0);
+        double force = e.getForce();
+        if (force > 0.3 && force > expected + FASTBOW.p("force-slack")) {
+            if (pl.vio().flag(pd, FASTBOW, String.format("force %.2f after %dms (max %.2f)", force, elapsed, expected), 1.0)) {
+                e.setCancelled(true);
+            }
+        }
+    }
+
+    // ===================================================================================== potions / totems
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onLaunch(ProjectileLaunchEvent e) {
+        if (!(e.getEntity() instanceof ThrownPotion tpot) || !(tpot.getShooter() instanceof Player p) || !AUTOPOT.enabled) return;
+        PlayerData pd = pl.data(p);
+        long now = System.currentTimeMillis();
+        if (pd.bypassed(now, pl.settings())) return;
+        if (pd.lastHeldMs != 0 && now - pd.lastHeldMs < AUTOPOT.p("min-delay-ms")) {
+            if (pd.bump("autopot", 1) >= AUTOPOT.p("buffer")) {
+                pd.setBuf("autopot", 0);
+                pl.vio().flag(pd, AUTOPOT, "potion thrown " + (now - pd.lastHeldMs) + "ms after switching slot", 1.0);
+            }
+        } else {
+            pd.bump("autopot", -0.5);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onResurrect(EntityResurrectEvent e) {
+        if (e.getEntity() instanceof Player p) {
+            PlayerData pd = pl.data(p);
+            pd.lastTotemPop = System.currentTimeMillis();
+            pd.ts("totemUsed", 0);
+        }
+    }
+
+    private void totemEquip(Player p) {
+        if (!TOTEM.enabled) return;
+        PlayerData pd = pl.data(p);
+        long now = System.currentTimeMillis();
+        if (pd.lastTotemPop == 0 || now - pd.lastTotemPop > 1500 || pd.ts("totemUsed") == pd.lastTotemPop) return;
+        if (pd.bypassed(now, pl.settings())) return;
+        pd.ts("totemUsed", pd.lastTotemPop);
+        double react = now - pd.lastTotemPop - pd.ping;
+        if (react < TOTEM.p("max-reaction-ms")) {
+            if (pd.bump("totem", 1) >= TOTEM.p("buffer")) {
+                pd.setBuf("totem", 0);
+                pl.vio().flag(pd, TOTEM, String.format("totem re-equipped %.0fms after the pop (ping-adjusted)", Math.max(0, react)), 1.0);
+            }
+        } else {
+            pd.bump("totem", -1);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onSwapHands(PlayerSwapHandItemsEvent e) {
+        ItemStack off = e.getOffHandItem();
+        if (off != null && off.getType() == Material.TOTEM_OF_UNDYING) totemEquip(e.getPlayer());
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onTotemClick(InventoryClickEvent e) {
+        if (!(e.getWhoClicked() instanceof Player p)) return;
+        ItemStack cur = e.getCurrentItem(), cursor = e.getCursor();
+        boolean totem = (cur != null && cur.getType() == Material.TOTEM_OF_UNDYING)
+                || (cursor != null && cursor.getType() == Material.TOTEM_OF_UNDYING);
+        if (!totem && e.getHotbarButton() >= 0) {
+            ItemStack hb = p.getInventory().getItem(e.getHotbarButton());
+            totem = hb != null && hb.getType() == Material.TOTEM_OF_UNDYING;
+        }
+        if (totem) totemEquip(p);
     }
 }
