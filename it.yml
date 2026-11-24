@@ -1,0 +1,32 @@
+# Language check: shows which client language a player uses (informational; nobody is punished for a language).
+# The code comes from the Minecraft client setting (en_us -> en).
+highlight: []                 # language codes that should ALSO be announced to staff, e.g. [ru, zh]
+languages:
+  en: English
+  es: Spanish
+  de: German
+  fr: French
+  it: Italian
+  pt: Portuguese
+  ru: Russian
+  nl: Dutch
+  tr: Turkish
+  pl: Polish
+  uk: Ukrainian
+  cs: Czech
+  sv: Swedish
+  da: Danish
+  fi: Finnish
+  no: Norwegian
+  hu: Hungarian
+  ro: Romanian
+  el: Greek
+  he: Hebrew
+  ar: Arabic
+  zh: Chinese
+  ja: Japanese
+  ko: Korean
+  id: Indonesian
+  vi: Vietnamese
+  th: Thai
+  hi: Hindi
