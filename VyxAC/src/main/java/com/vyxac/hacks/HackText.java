@@ -22,7 +22,7 @@ import java.util.Map;
 public final class HackText {
     public static final String[] LANGUAGES = {"en", "es", "de", "fr", "it", "pt", "ru", "nl", "tr"};
     private static final Map<String, ChatColor> COLORS = new HashMap<>();
-   private static final Map<String, String> FORMATS = new HashMap<>();
+    private static final Map<String, ChatColor> FORMATS = new HashMap<>();
 
     static {
         String[][] c = {{"black", "BLACK"}, {"dark_blue", "DARK_BLUE"}, {"dark_green", "DARK_GREEN"}, {"dark_aqua", "DARK_AQUA"},
@@ -33,7 +33,7 @@ public final class HackText {
         String[][] f = {{"bold", "BOLD"}, {"b", "BOLD"}, {"italic", "ITALIC"}, {"i", "ITALIC"}, {"em", "ITALIC"},
                 {"underlined", "UNDERLINE"}, {"u", "UNDERLINE"}, {"strikethrough", "STRIKETHROUGH"}, {"st", "STRIKETHROUGH"},
                 {"obfuscated", "MAGIC"}, {"obf", "MAGIC"}};
-        for (String[] e : f) {     FORMATS.put(e[0], e[1].equals("MAGIC")             ? org.bukkit.ChatColor.MAGIC.toString()             : ChatColor.valueOf(e[1]).toString()); }
+        for (String[] e : f) FORMATS.put(e[0], ChatColor.valueOf(e[1]));
     }
 
     private final VyxAC pl;

@@ -47,8 +47,16 @@ public final class VyxAC extends JavaPlugin {
         staff = new StaffManager(this);
         staffGui = new StaffGui(this);
         loadAll();
-        ai.loadModel();
-        reports.load();
+        try {
+            ai.loadModel();
+        } catch (Throwable t) {
+            getLogger().log(java.util.logging.Level.WARNING, "ai-model.yml could not be read, using defaults", t);
+        }
+        try {
+            reports.load();
+        } catch (Throwable t) {
+            getLogger().log(java.util.logging.Level.WARNING, "reports.yml could not be read", t);
+        }
 
         for (Player p : Bukkit.getOnlinePlayers()) data(p);
 
@@ -60,23 +68,30 @@ public final class VyxAC extends JavaPlugin {
         Bukkit.getPluginManager().registerEvents(staffGui, this);
         Bukkit.getPluginManager().registerEvents(new StaffListener(this, staffGui), this);
 
-        hacks = new HackChecker(this);
-        hacks.start();
-        Bukkit.getPluginManager().registerEvents(new HackListener(this), this);
-        HackCommands hackCmd = new HackCommands(this);
-        for (String n : new String[]{"checkhacks", "chalerts", "cheditor", "checkhacksupdate", "checklang"}) {
-            PluginCommand hc = getCommand(n);
-            if (hc != null) {
-                hc.setExecutor(hackCmd);
-                hc.setTabCompleter(hackCmd);
-            }
-        }
-
+        // the main command first, so VyxAC stays usable no matter what an optional module does
         VyxCommand cmd = new VyxCommand(this, gui, new ExtraCommands(this, staffGui, new SelfTest(this)));
         PluginCommand pc = getCommand("vyxac");
         if (pc != null) {
             pc.setExecutor(cmd);
             pc.setTabCompleter(cmd);
+        }
+
+        // CheckHacks is optional: any problem in it must never stop the rest of the plugin
+        try {
+            hacks = new HackChecker(this);
+            hacks.start();
+            Bukkit.getPluginManager().registerEvents(new HackListener(this), this);
+            HackCommands hackCmd = new HackCommands(this);
+            for (String n : new String[]{"checkhacks", "chalerts", "cheditor", "checkhacksupdate", "checklang"}) {
+                PluginCommand hc = getCommand(n);
+                if (hc != null) {
+                    hc.setExecutor(hackCmd);
+                    hc.setTabCompleter(hackCmd);
+                }
+            }
+        } catch (Throwable t) {
+            hacks = null;
+            getLogger().log(java.util.logging.Level.SEVERE, "CheckHacks could not start and was switched off; everything else keeps working", t);
         }
 
         ticks.start();
@@ -97,7 +112,11 @@ public final class VyxAC extends JavaPlugin {
             ai.stop();
             ai.saveModel();
         }
-        if (hacks != null) hacks.stop();
+        try {
+            if (hacks != null) hacks.stop();
+        } catch (Throwable ignored) {
+            // shutting down
+        }
         if (staff != null) staff.exitAll(); // everybody gets their real inventory back
         if (reports != null) reports.save();
         if (diagnostics != null) diagnostics.finish(true); // partial report of the current day

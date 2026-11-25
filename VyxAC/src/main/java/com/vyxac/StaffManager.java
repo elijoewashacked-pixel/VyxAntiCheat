@@ -251,13 +251,12 @@ public final class StaffManager {
         msg(p, "&aStaff mode &2ON&a. You are vanished and your inventory is saved. Use the red dye (slot 9) to leave.");
         return true;
     }
-      
+
     public boolean exit(Player p, boolean quiet) {
         UUID id = p.getUniqueId();
         Saved s = saved.remove(id);
-if (s == null) return false;
-frozen.remove(id);
-restore(p, s);
+        if (s == null) return false;
+        restore(p, s);
         fileOf(id).delete();
         if (!quiet) msg(p, "&cStaff mode &4OFF&c. Your inventory was restored.");
         return true;
@@ -279,12 +278,8 @@ restore(p, s);
         p.setAllowFlight(s.allowFlight);
         if (!s.allowFlight || !s.flying) p.setFlying(false);
         if (p.getGameMode() != s.gm) p.setGameMode(s.gm);
-        // stay invulnerable for a few seconds so leaving staff mode in mid-air cannot kill anyone
-        p.setInvulnerable(true);
-        final boolean back = s.invulnerable;
-        Bukkit.getScheduler().runTaskLater(pl, () -> {
-            if (p.isOnline()) p.setInvulnerable(back);
-        }, 100L);
+        // Restore the player's original damage protection immediately when staff mode ends.
+        p.setInvulnerable(s.invulnerable);
         PlayerData pd = pl.dataOrNull(id);
         if (pd != null) {
             pd.staffMode = false;
