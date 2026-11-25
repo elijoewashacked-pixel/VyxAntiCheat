@@ -278,8 +278,10 @@ public final class StaffManager {
         p.setAllowFlight(s.allowFlight);
         if (!s.allowFlight || !s.flying) p.setFlying(false);
         if (p.getGameMode() != s.gm) p.setGameMode(s.gm);
-        // Restore the player's original damage protection immediately when staff mode ends.
-        p.setInvulnerable(s.invulnerable);
+        // Staff mode protection must NEVER carry into normal mode.
+        // Do not restore the saved flag here: stale backups may contain true.
+        p.setInvulnerable(false);
+        p.setNoDamageTicks(0);
         PlayerData pd = pl.dataOrNull(id);
         if (pd != null) {
             pd.staffMode = false;
